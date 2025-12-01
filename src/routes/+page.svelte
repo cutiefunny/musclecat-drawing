@@ -17,8 +17,11 @@
   // --- 상태 관리 ---
   let history = [];     
   let currentStep = -1; 
-  let isEraser = false; 
-  let lastColor = '#000000'; 
+  
+  // [변경] 도구 상태 관리 ('pen' | 'eraser' | 'bucket')
+  let currentTool = 'pen';
+  let lastColor = '#000000'; // 원래 색상 기억용
+  
   let showBrushPreview = false;
 
   // 갤러리 데이터 & 시간 체크
@@ -32,7 +35,7 @@
   let isSaving = false;
 
   onMount(() => {
-    mainCtx = mainCanvas.getContext('2d');
+    mainCtx = mainCanvas.getContext('2d', { willReadFrequently: true }); // 읽기 최적화
     tempCtx = tempCanvas.getContext('2d');
 
     resizeCanvas();
@@ -110,14 +113,23 @@
     renderCanvas();
   }
 
+  // --- 렌더링 (Stroke & Fill) ---
   function renderCanvas() {
     if (!mainCtx) return;
+    
+    // 초기화
     mainCtx.fillStyle = '#ffffff';
     mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
+    // 히스토리 재생
     for (let i = 0; i <= currentStep; i++) {
-      const strokeData = history[i];
-      drawStrokeOnCanvas(mainCtx, strokeData.points, strokeData.color, strokeData.size);
+      const action = history[i];
+      
+      if (action.type === 'stroke') {
+        drawStrokeOnCanvas(mainCtx, action.points, action.color, action.size);
+      } else if (action.type === 'fill') {
+        floodFill(mainCtx, action.x, action.y, action.color);
+      }
     }
   }
 
@@ -132,6 +144,58 @@
     const myPath = new Path2D(pathData);
     ctx.fillStyle = strokeColor;
     ctx.fill(myPath);
+  }
+
+  // --- Flood Fill 알고리즘 (채우기) ---
+  function floodFill(ctx, startX, startY, fillColor) {
+    const canvas = ctx.canvas;
+    const w = canvas.width;
+    const h = canvas.height;
+    
+    // 현재 캔버스 픽셀 데이터 가져오기
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+
+    // 채울 색상 (Hex -> RGBA)
+    const r = parseInt(fillColor.slice(1, 3), 16);
+    const g = parseInt(fillColor.slice(3, 5), 16);
+    const b = parseInt(fillColor.slice(5, 7), 16);
+    const a = 255;
+
+    // 시작점의 색상 파악
+    const startPos = (Math.floor(startY) * w + Math.floor(startX)) * 4;
+    const startR = data[startPos];
+    const startG = data[startPos + 1];
+    const startB = data[startPos + 2];
+    const startA = data[startPos + 3];
+
+    // 이미 같은 색이면 중단
+    if (startR === r && startG === g && startB === b && startA === a) return;
+
+    // BFS (Queue 방식)
+    const queue = [[Math.floor(startX), Math.floor(startY)]];
+    
+    while (queue.length) {
+      const [x, y] = queue.pop();
+      const pos = (y * w + x) * 4;
+
+      if (x < 0 || x >= w || y < 0 || y >= h) continue;
+
+      // 현재 픽셀이 시작 색상과 같은지 확인 (오차 범위 없이 정확히 일치)
+      if (data[pos] === startR && data[pos+1] === startG && data[pos+2] === startB && data[pos+3] === startA) {
+        data[pos] = r;
+        data[pos+1] = g;
+        data[pos+2] = b;
+        data[pos+3] = a;
+
+        queue.push([x + 1, y]);
+        queue.push([x - 1, y]);
+        queue.push([x, y + 1]);
+        queue.push([x, y - 1]);
+      }
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
   }
 
   function getEventPoint(e) {
@@ -169,9 +233,33 @@
     return d.join(' ');
   }
 
+  // --- 그리기 시작 (도구별 분기) ---
   function startDrawing(e) {
-    isDrawing = true;
     const point = getEventPoint(e);
+
+    // [Bucket] 채우기 도구일 경우
+    if (currentTool === 'bucket') {
+      // 히스토리 관리
+      if (currentStep < history.length - 1) {
+        history = history.slice(0, currentStep + 1);
+      }
+      
+      // 채우기 동작 기록
+      history.push({
+        type: 'fill',
+        x: point.x,
+        y: point.y,
+        color: color
+      });
+      currentStep++;
+      
+      // 즉시 렌더링
+      renderCanvas();
+      return; 
+    }
+
+    // [Pen / Eraser] 그리기 도구일 경우
+    isDrawing = true;
     points = [[point.x, point.y, point.pressure]];
   }
 
@@ -181,6 +269,7 @@
     
     const point = getEventPoint(e);
     points = [...points, [point.x, point.y, point.pressure]];
+    
     if (tempCtx) {
       tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
       drawStrokeOnCanvas(tempCtx, points, color, size);
@@ -190,11 +279,21 @@
   function stopDrawing() {
     if (!isDrawing) return;
     isDrawing = false;
+
     if (currentStep < history.length - 1) {
       history = history.slice(0, currentStep + 1);
     }
-    history.push({ points: points, color: color, size: size });
+    
+    // 스트로크 기록
+    history.push({ 
+      type: 'stroke',
+      points: points, 
+      color: color, 
+      size: size 
+    });
+    
     currentStep++;
+    
     if (tempCtx) tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
     renderCanvas();
     points = [];
@@ -214,26 +313,29 @@
     }
   }
 
-  function clearCanvas() {
+  // 내부 리셋용 (저장 후 호출)
+  function resetCanvas() {
     history = [];
     currentStep = -1;
     renderCanvas();
-    if (isEraser) toggleEraser();
+    setTool('pen'); // 펜으로 복귀
   }
 
   function updateColor(e) {
-    color = e.target.value;
-    if (isEraser) isEraser = false;
+    lastColor = e.target.value;
+    // 지우개가 아닐 때만 현재 색상 변경
+    if (currentTool !== 'eraser') {
+      color = lastColor;
+    }
   }
 
-  function toggleEraser() {
-    if (isEraser) {
-      isEraser = false;
-      color = lastColor;
+  // 도구 선택 함수
+  function setTool(tool) {
+    currentTool = tool;
+    if (tool === 'eraser') {
+      color = '#ffffff';
     } else {
-      isEraser = true;
-      lastColor = color;
-      color = '#ffffff'; 
+      color = lastColor;
     }
   }
 
@@ -262,10 +364,8 @@
       return;
     }
 
-    // --- [추가됨] 저장 컨펌 로직 ---
     const isConfirmed = await showConfirm('그림을 저장하시겠습니까?');
-    if (!isConfirmed) return; // 취소하면 저장 중단
-    // ----------------------------
+    if (!isConfirmed) return;
 
     if (isSaving) return;
     isSaving = true;
@@ -280,9 +380,9 @@
       const storageRef = ref(storage, filename);
       await uploadBytes(storageRef, blob);
       
-      await showAlert('저장 완료! 삭제는 15분 이내로 가능합니다.');
+      await showAlert('저장 완료! 15분 이내로 삭제 가능합니다.');
       await loadGallery(); 
-      clearCanvas(); 
+      resetCanvas(); 
       
     } catch (e) {
       console.error(e);
@@ -305,33 +405,43 @@
       style="
         width: {size}px; 
         height: {size}px; 
-        background-color: {isEraser ? '#ffffff' : color};
-        border: {isEraser ? '2px solid #333' : (color === '#ffffff' ? '2px solid #eee' : 'none')};
+        background-color: {currentTool === 'eraser' ? '#ffffff' : color};
+        border: {currentTool === 'eraser' ? '2px solid #333' : (color === '#ffffff' ? '2px solid #eee' : 'none')};
       "
     ></div>
   {/if}
 
   <div class="toolbar">
     <div class="group">
-      <input type="color" value={isEraser ? lastColor : color} on:input={updateColor} title="색상 선택" />
+      <input type="color" value={lastColor} on:input={updateColor} title="색상 선택" />
       
       <button 
-        on:click={toggleEraser} 
-        class:active={isEraser} 
-        title={isEraser ? "지우개 모드 켜짐" : "브러시 모드"}
+        on:click={() => setTool('pen')} 
+        class:active={currentTool === 'pen'} 
+        title="펜"
       >
-        {#if isEraser}
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
-            <path d="M22 21H7" />
-            <path d="m5 11 9 9" />
-          </svg>
-        {:else}
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-            <path d="m15 5 4 4" />
-          </svg>
-        {/if}
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+      </button>
+
+      <button 
+        on:click={() => setTool('eraser')} 
+        class:active={currentTool === 'eraser'} 
+        title="지우개"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+      </button>
+
+      <button 
+        on:click={() => setTool('bucket')} 
+        class:active={currentTool === 'bucket'} 
+        title="채우기"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/>
+          <path d="m5 2 5 5"/>
+          <path d="M2 13h15"/>
+          <path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/>
+        </svg>
       </button>
 
       <input 
@@ -354,9 +464,6 @@
       </button>
       <button on:click={redo} disabled={currentStep >= history.length - 1} title="다시 실행">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
-      </button>
-      <button on:click={clearCanvas} title="모두 지우기">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
       </button>
       
       <button 
