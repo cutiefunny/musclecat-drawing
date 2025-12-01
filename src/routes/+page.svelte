@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { getStroke } from 'perfect-freehand';
   import { storage } from '$lib/firebase';
   import { ref, uploadBytes, listAll, getDownloadURL, deleteObject } from 'firebase/storage';
   import emblaCarouselSvelte from 'embla-carousel-svelte';
-  import { showAlert, showConfirm } from '$lib/stores/dialog';
+  import { showAlert, showConfirm, showLoading } from '$lib/stores/dialog';
 
   let mainCanvas;
   let tempCanvas;
@@ -18,11 +19,20 @@
   let history = [];     
   let currentStep = -1; 
   
-  // 도구 상태 관리 ('pen' | 'eraser' | 'bucket')
+  // 도구 상태 ('pen' | 'eraser' | 'bucket')
   let currentTool = 'pen';
   let lastColor = '#000000'; // 원래 색상 기억용
   
+  // UI 상태
+  let isColorPickerOpen = false;
   let showBrushPreview = false;
+
+  // 프리셋 색상 목록
+  const presetColors = [
+    '#000000', '#ffffff', '#808080', '#ff0000', '#ff8800', 
+    '#ffff00', '#00ff00', '#008800', '#00ffff', '#0000ff', 
+    '#8800ff', '#ff00ff'
+  ];
 
   // 갤러리 데이터 & 시간 체크
   let savedDrawings = []; 
@@ -152,27 +162,22 @@
     const w = canvas.width;
     const h = canvas.height;
     
-    // 현재 캔버스 픽셀 데이터 가져오기
     const imageData = ctx.getImageData(0, 0, w, h);
     const data = imageData.data;
 
-    // 채울 색상 (Hex -> RGBA)
     const r = parseInt(fillColor.slice(1, 3), 16);
     const g = parseInt(fillColor.slice(3, 5), 16);
     const b = parseInt(fillColor.slice(5, 7), 16);
     const a = 255;
 
-    // 시작점의 색상 파악
     const startPos = (Math.floor(startY) * w + Math.floor(startX)) * 4;
     const startR = data[startPos];
     const startG = data[startPos + 1];
     const startB = data[startPos + 2];
     const startA = data[startPos + 3];
 
-    // 이미 같은 색이면 중단
     if (startR === r && startG === g && startB === b && startA === a) return;
 
-    // BFS (Queue 방식)
     const queue = [[Math.floor(startX), Math.floor(startY)]];
     
     while (queue.length) {
@@ -181,7 +186,6 @@
 
       if (x < 0 || x >= w || y < 0 || y >= h) continue;
 
-      // 현재 픽셀이 시작 색상과 같은지 확인
       if (data[pos] === startR && data[pos+1] === startG && data[pos+2] === startB && data[pos+3] === startA) {
         data[pos] = r;
         data[pos+1] = g;
@@ -236,25 +240,22 @@
   function startDrawing(e) {
     const point = getEventPoint(e);
 
-    // [Bucket] 채우기 도구
+    // 색상 팔레트가 열려있으면 닫기만 하고 그리기 시작 안함
+    if (isColorPickerOpen) {
+      isColorPickerOpen = false;
+      return; 
+    }
+
     if (currentTool === 'bucket') {
       if (currentStep < history.length - 1) {
         history = history.slice(0, currentStep + 1);
       }
-      
-      history.push({
-        type: 'fill',
-        x: point.x,
-        y: point.y,
-        color: color
-      });
+      history.push({ type: 'fill', x: point.x, y: point.y, color: color });
       currentStep++;
-      
       renderCanvas();
       return; 
     }
 
-    // [Pen / Eraser] 그리기 도구
     isDrawing = true;
     points = [[point.x, point.y, point.pressure]];
   }
@@ -279,14 +280,7 @@
     if (currentStep < history.length - 1) {
       history = history.slice(0, currentStep + 1);
     }
-    
-    history.push({ 
-      type: 'stroke',
-      points: points, 
-      color: color, 
-      size: size 
-    });
-    
+    history.push({ type: 'stroke', points: points, color: color, size: size });
     currentStep++;
     
     if (tempCtx) tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
@@ -315,19 +309,20 @@
     setTool('pen');
   }
 
-  function clearCanvas() {
-    // 툴바에서 '모두 지우기' 버튼 클릭 시
-    history = [];
-    currentStep = -1;
-    renderCanvas();
-    setTool('pen');
+  // 색상 선택 로직
+  function toggleColorPicker() {
+    isColorPickerOpen = !isColorPickerOpen;
   }
 
-  function updateColor(e) {
+  function selectColor(newColor) {
+    lastColor = newColor;
+    if (currentTool !== 'eraser') color = lastColor;
+    isColorPickerOpen = false; 
+  }
+
+  function updateNativeColor(e) {
     lastColor = e.target.value;
-    if (currentTool !== 'eraser') {
-      color = lastColor;
-    }
+    if (currentTool !== 'eraser') color = lastColor;
   }
 
   function setTool(tool) {
@@ -369,6 +364,10 @@
 
     if (isSaving) return;
     isSaving = true;
+    
+    // 로딩 모달 표시
+    showLoading('열심히 저장하고 있어요... 🎨');
+
     try {
       const blob = await createResizedAvifBlob();
       if (!blob) { 
@@ -386,7 +385,7 @@
       
     } catch (e) {
       console.error(e);
-      await showAlert('저장 실패');
+      await showAlert('저장 실패 😢');
     } finally {
       isSaving = false;
     }
@@ -411,9 +410,39 @@
     ></div>
   {/if}
 
+  {#if isColorPickerOpen}
+    <div class="color-picker-popup" transition:fade={{ duration: 150 }}>
+      <div class="color-grid">
+        {#each presetColors as preset}
+          <button 
+            class="color-swatch" 
+            style="background-color: {preset};"
+            on:click={() => selectColor(preset)}
+            aria-label="색상 선택"
+          ></button>
+        {/each}
+        
+        <div class="native-picker-wrapper">
+            <label for="native-color" class="rainbow-btn">🌈</label>
+            <input 
+                id="native-color" 
+                type="color" 
+                value={lastColor} 
+                on:input={updateNativeColor} 
+            />
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <div class="toolbar">
     <div class="group">
-      <input type="color" value={lastColor} on:input={updateColor} title="색상 선택" />
+      <button 
+        class="color-btn" 
+        style="background-color: {lastColor}; border: 2px solid #ddd;" 
+        on:click={toggleColorPicker}
+        title="색상 선택"
+      ></button>
       
       <button 
         on:click={() => setTool('pen')} 
@@ -583,6 +612,66 @@
     box-shadow: 0 0 5px rgba(0,0,0,0.2);
   }
 
+  .color-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    flex-shrink: 0;
+  }
+
+  .color-picker-popup {
+    position: absolute;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: white;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    z-index: 20;
+    width: 200px;
+  }
+
+  .color-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    justify-items: center;
+  }
+
+  .color-swatch {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 2px solid #eee;
+    cursor: pointer;
+    padding: 0;
+  }
+  
+  .native-picker-wrapper {
+    position: relative;
+    width: 30px;
+    height: 30px;
+  }
+  .rainbow-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    font-size: 18px;
+    cursor: pointer;
+    background: #f0f0f0;
+    border-radius: 50%;
+  }
+  #native-color {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer;
+  }
+
   .save-btn {
     background: #28a745;
     color: white;
@@ -600,30 +689,9 @@
     to { transform: rotate(360deg); }
   }
 
-  /* 슬라이더 축소 */
   input[type="range"] {
-    width: 50px; /* Reduced from 80px */
+    width: 50px;
     flex-shrink: 0;
-  }
-
-  /* 색상 선택기 스타일링 */
-  input[type="color"] {
-    width: 34px;
-    height: 34px;
-    padding: 0;
-    border: none;
-    background: none;
-    border-radius: 50%;
-    cursor: pointer;
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-  input[type="color"]::-webkit-color-swatch-wrapper {
-    padding: 0;
-  }
-  input[type="color"]::-webkit-color-swatch {
-    border: none;
-    border-radius: 50%;
   }
 
   .gallery-wrapper {
