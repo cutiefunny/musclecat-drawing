@@ -1,11 +1,11 @@
 # 🎨 근육고양이 그림판
 
-> 홍대 근육고양이잡화점에서 방명록으로 사용되는 그림판 애플리케이션입니다.
+> 홍대 근육고양이잡화점에서 방명록으로 사용되는 그림판 애플리케이션입니다.   
 > **SvelteKit**과 **Firebase**로 만든 모바일 최적화 터치 드로잉 웹앱입니다.  
 > 부드러운 필기감과 실시간 갤러리, PWA 기능을 제공합니다.
 
 ![Project Banner](https://via.placeholder.com/1200x600?text=MuscleCat+Drawing+App+Screenshot)
-*(스크린샷 이미지가 있다면 여기에 경로를 넣어주세요)*
+*(준비중)*
 
 ## ✨ 주요 기능 (Features)
 
@@ -86,10 +86,3 @@ src/
 └── static/            # PWA 아이콘 및 정적 파일
 📜 라이선스 (License)
 This project is licensed under the MIT License.
-
-
----
-
-### 💡 팁
-* `![Project Banner](...)` 부분에 나중에 실제 앱 스크린샷 이미지 주소를 넣으면 훨씬 매력적인 리드미가 됩니다. (`static` 폴더에 이미지를 넣고 `/screenshot.png` 처럼 연결해도 됩니다.)
-* GitHub 저장소 설정(Settings)에서 `Social Preview` 이미지를 등록하는 것도 잊지 마세요!
