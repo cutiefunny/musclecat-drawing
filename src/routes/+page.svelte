@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { getStroke } from 'perfect-freehand';
   import { storage } from '$lib/firebase';
-  import { ref, uploadBytes, listAll, getDownloadURL } from 'firebase/storage';
+  import { ref, uploadBytes, listAll, getDownloadURL, deleteObject } from 'firebase/storage';
   import emblaCarouselSvelte from 'embla-carousel-svelte';
 
   let mainCanvas;
@@ -18,13 +18,12 @@
   let currentStep = -1; 
   let isEraser = false; 
   let lastColor = '#000000'; 
-  
-  // 브러시 미리보기 상태
   let showBrushPreview = false;
 
-  // 갤러리 데이터
+  // 갤러리 데이터 & 시간 체크
   let savedDrawings = []; 
   let emblaApi;
+  let now = Date.now(); 
 
   // 옵션
   let color = '#000000';
@@ -41,9 +40,14 @@
 
     loadGallery();
 
+    const timer = setInterval(() => {
+      now = Date.now();
+    }, 60000);
+
     return () => {
       window.removeEventListener('resize', resizeCanvas);
       window.removeEventListener('keydown', handleKeydown);
+      clearInterval(timer);
     };
   });
 
@@ -51,11 +55,33 @@
     try {
       const listRef = ref(storage, 'drawings/');
       const res = await listAll(listRef);
-      const promises = res.items.map((itemRef) => getDownloadURL(itemRef));
-      const urls = await Promise.all(promises);
-      savedDrawings = urls.reverse();
+      
+      const promises = res.items.map(async (itemRef) => {
+        const url = await getDownloadURL(itemRef);
+        const time = parseInt(itemRef.name.split('.')[0]);
+        return {
+          url,
+          ref: itemRef,
+          time: isNaN(time) ? 0 : time
+        };
+      });
+
+      const items = await Promise.all(promises);
+      savedDrawings = items.sort((a, b) => b.time - a.time);
+      
     } catch (error) {
       console.error("갤러리 로드 실패:", error);
+    }
+  }
+
+  async function deleteImage(img) {
+    if (!confirm('정말 삭제하시겠습니까?')) return;
+    try {
+      await deleteObject(img.ref);
+      savedDrawings = savedDrawings.filter(item => item !== img);
+    } catch (error) {
+      console.error("삭제 실패:", error);
+      alert("삭제에 실패했습니다.");
     }
   }
   
@@ -106,11 +132,24 @@
   }
 
   function getEventPoint(e) {
+    const rect = tempCanvas.getBoundingClientRect();
+    let clientX, clientY, pressure = 0.5;
+
     if (e.touches && e.touches.length > 0) {
-      return { x: e.touches[0].clientX, y: e.touches[0].clientY, pressure: e.touches[0].force || 0.5 };
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+      pressure = e.touches[0].force || 0.5;
     } else {
-      return { x: e.clientX, y: e.clientY, pressure: 0.5 };
+      clientX = e.clientX;
+      clientY = e.clientY;
+      pressure = 0.5;
     }
+
+    return { 
+      x: clientX - rect.left, 
+      y: clientY - rect.top, 
+      pressure 
+    };
   }
 
   function getSvgPathFromStroke(stroke) {
@@ -135,6 +174,8 @@
 
   function draw(e) {
     if (!isDrawing) return;
+    if(e.cancelable) e.preventDefault();
+    
     const point = getEventPoint(e);
     points = [...points, [point.x, point.y, point.pressure]];
     if (tempCtx) {
@@ -213,6 +254,12 @@
   }
 
   async function saveToFirebase() {
+    // [수정됨] currentStep이 0보다 작으면(초기 상태 or 모두 Undo됨) 저장 불가
+    if (currentStep < 0) {
+      alert('그림을 그려주세요!');
+      return;
+    }
+
     if (isSaving) return;
     isSaving = true;
     try {
@@ -292,20 +339,29 @@
     </div>
     
     <div class="group">
-      <button on:click={undo} disabled={currentStep < 0}>
+      <button on:click={undo} disabled={currentStep < 0} title="실행 취소">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
       </button>
-      <button on:click={redo} disabled={currentStep >= history.length - 1}>
+      <button on:click={redo} disabled={currentStep >= history.length - 1} title="다시 실행">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
       </button>
       <button on:click={clearCanvas} title="모두 지우기">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
       </button>
+      
+      <button 
+        on:click={saveToFirebase} 
+        disabled={isSaving || currentStep < 0} 
+        class="save-btn" 
+        title={isSaving ? "저장 중..." : (currentStep < 0 ? "그림을 그려주세요" : "저장하기")}
+      >
+        {#if isSaving}
+          <svg class="spinner" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        {:else}
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        {/if}
+      </button>
     </div>
-
-    <button on:click={saveToFirebase} disabled={isSaving} class="save-btn">
-      {isSaving ? '...' : '저장'}
-    </button>
   </div>
 
   <canvas bind:this={mainCanvas} class="main-canvas"></canvas>
@@ -321,10 +377,19 @@
   <div class="gallery-wrapper">
     <div class="embla" use:emblaCarouselSvelte={{ options: emblaOptions, plugins: [] }} on:emblaInit={onInit}>
       <div class="embla__container">
-        {#each savedDrawings as url}
+        {#each savedDrawings as img}
           <div class="embla__slide">
             <div class="image-card">
-              <img src={url} alt="Saved drawing" loading="lazy" />
+              <img src={img.url} alt="Saved drawing" loading="lazy" />
+              {#if (now - img.time) < 15 * 60 * 1000}
+                <button 
+                  class="delete-img-btn" 
+                  on:click|stopPropagation={() => deleteImage(img)}
+                  title="삭제하기"
+                >
+                  ×
+                </button>
+              {/if}
             </div>
           </div>
         {/each}
@@ -343,46 +408,54 @@
   .temp-canvas { z-index: 2; cursor: crosshair; }
   .main-canvas { z-index: 1; }
 
-  /* 브러시 미리보기 스타일 */
   .brush-preview {
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
     border-radius: 50%;
-    pointer-events: none; /* 클릭 통과 */
+    pointer-events: none;
     z-index: 100;
-    box-shadow: 0 0 10px rgba(0,0,0,0.1); /* 약간의 그림자 */
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
   }
 
   .toolbar {
     position: absolute;
-    top: 20px;
+    top: 15px;
     left: 50%;
     transform: translateX(-50%);
     background: white;
-    padding: 10px 20px;
+    padding: 8px 15px;
     border-radius: 50px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     display: flex;
-    gap: 20px;
+    gap: 15px;
     align-items: center;
     z-index: 10;
+    max-width: 90vw;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
   }
+  .toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
   .group { display: flex; gap: 8px; align-items: center; }
 
   button {
     background: #f0f0f0;
     color: #333;
     border: 2px solid transparent;
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
+    flex-shrink: 0;
   }
   button:hover:not(:disabled) { background: #e0e0e0; transform: scale(1.1); }
   button:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -395,8 +468,27 @@
     box-shadow: 0 0 5px rgba(0,0,0,0.2);
   }
 
-  .save-btn { background: #007bff; color: white; width: auto; padding: 0 20px; border-radius: 20px; font-size: 0.9rem; font-weight: bold; border: none; }
-  .save-btn:hover:not(:disabled) { background: #0056b3; }
+  .save-btn {
+    background: #28a745;
+    color: white;
+  }
+  .save-btn:hover:not(:disabled) {
+    background: #218838;
+    transform: scale(1.1);
+  }
+  
+  .spinner {
+    animation: rotate 1s linear infinite;
+  }
+  @keyframes rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  input[type="range"] {
+    width: 80px;
+    flex-shrink: 0;
+  }
 
   .gallery-wrapper {
     position: absolute;
@@ -414,7 +506,9 @@
   .embla { overflow: hidden; width: 100%; height: 100%; }
   .embla__container { display: flex; padding-left: 20px; gap: 10px; }
   .embla__slide { flex: 0 0 auto; width: 100px; height: 100px; }
+  
   .image-card {
+    position: relative;
     width: 100%;
     height: 100%;
     background: white;
@@ -428,4 +522,28 @@
   }
   .image-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .empty-message { padding: 20px; color: #888; font-size: 0.9rem; }
+
+  .delete-img-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 24px;
+    height: 24px;
+    background: rgba(255, 68, 68, 0.9);
+    color: white;
+    border-radius: 50%;
+    border: none;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+  .delete-img-btn:hover {
+    background: #cc0000;
+    transform: scale(1.1);
+  }
 </style>
