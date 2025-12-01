@@ -21,11 +21,12 @@
   
   // 도구 상태 ('pen' | 'eraser' | 'bucket')
   let currentTool = 'pen';
-  let lastColor = '#000000'; // 원래 색상 기억용
+  let lastColor = '#000000'; 
   
   // UI 상태
   let isColorPickerOpen = false;
   let showBrushPreview = false;
+  let selectedImage = null;
 
   // 프리셋 색상 목록
   const presetColors = [
@@ -126,15 +127,11 @@
   // --- 렌더링 (Stroke & Fill) ---
   function renderCanvas() {
     if (!mainCtx) return;
-    
-    // 초기화
     mainCtx.fillStyle = '#ffffff';
     mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
-    // 히스토리 재생
     for (let i = 0; i <= currentStep; i++) {
       const action = history[i];
-      
       if (action.type === 'stroke') {
         drawStrokeOnCanvas(mainCtx, action.points, action.color, action.size);
       } else if (action.type === 'fill') {
@@ -156,12 +153,10 @@
     ctx.fill(myPath);
   }
 
-  // --- Flood Fill 알고리즘 (채우기) ---
   function floodFill(ctx, startX, startY, fillColor) {
     const canvas = ctx.canvas;
     const w = canvas.width;
     const h = canvas.height;
-    
     const imageData = ctx.getImageData(0, 0, w, h);
     const data = imageData.data;
 
@@ -240,7 +235,6 @@
   function startDrawing(e) {
     const point = getEventPoint(e);
 
-    // 색상 팔레트가 열려있으면 닫기만 하고 그리기 시작 안함
     if (isColorPickerOpen) {
       isColorPickerOpen = false;
       return; 
@@ -309,7 +303,13 @@
     setTool('pen');
   }
 
-  // 색상 선택 로직
+  function clearCanvas() {
+    history = [];
+    currentStep = -1;
+    renderCanvas();
+    setTool('pen');
+  }
+
   function toggleColorPicker() {
     isColorPickerOpen = !isColorPickerOpen;
   }
@@ -332,6 +332,13 @@
     } else {
       color = lastColor;
     }
+  }
+
+  function openImageModal(url) {
+    selectedImage = url;
+  }
+  function closeImageModal() {
+    selectedImage = null;
   }
 
   async function createResizedAvifBlob() {
@@ -365,7 +372,6 @@
     if (isSaving) return;
     isSaving = true;
     
-    // 로딩 모달 표시
     showLoading('열심히 저장하고 있어요... 🎨');
 
     try {
@@ -379,7 +385,7 @@
       const storageRef = ref(storage, filename);
       await uploadBytes(storageRef, blob);
       
-      await showAlert('저장 완료! 15분 이내에 삭제할 수 있습니다.');
+      await showAlert('저장 완료! 15분 이내에 삭제할 수 있다!');
       await loadGallery(); 
       resetCanvas(); 
       
@@ -408,6 +414,15 @@
         border: {currentTool === 'eraser' ? '2px solid #333' : (color === '#ffffff' ? '2px solid #eee' : 'none')};
       "
     ></div>
+  {/if}
+
+  {#if selectedImage}
+    <div class="image-modal-backdrop" on:click={closeImageModal} transition:fade={{ duration: 200 }}>
+      <div class="image-modal-content" on:click|stopPropagation>
+        <img src={selectedImage} alt="Full size drawing" />
+        <button class="modal-close-btn" on:click={closeImageModal}>×</button>
+      </div>
+    </div>
   {/if}
 
   {#if isColorPickerOpen}
@@ -494,6 +509,9 @@
       <button on:click={redo} disabled={currentStep >= history.length - 1} title="다시 실행">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
       </button>
+      <button on:click={clearCanvas} title="모두 지우기">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+      </button>
       
       <button 
         on:click={saveToFirebase} 
@@ -525,7 +543,7 @@
       <div class="embla__container">
         {#each savedDrawings as img}
           <div class="embla__slide">
-            <div class="image-card">
+            <div class="image-card" on:click={() => openImageModal(img.url)}>
               <img src={img.url} alt="Saved drawing" loading="lazy" />
               {#if (now - img.time) < 15 * 60 * 1000}
                 <button 
@@ -553,6 +571,49 @@
   canvas { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; }
   .temp-canvas { z-index: 2; cursor: crosshair; }
   .main-canvas { z-index: 1; }
+
+  /* 이미지 모달 스타일 */
+  .image-modal-backdrop {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 200;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .image-modal-content {
+    position: relative;
+    width: auto;
+    max-width: 90%;
+    max-height: 90vh;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  .image-modal-content img {
+    width: 100%; height: auto; max-height: 80vh;
+    object-fit: contain;
+    display: block;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    background: white;
+  }
+  .modal-close-btn {
+    position: absolute;
+    top: 15px; right: 15px;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: none;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: none;
+    z-index: 201;
+    transition: background 0.2s;
+  }
+  .modal-close-btn:hover { background: rgba(0, 0, 0, 0.7); }
 
   .brush-preview {
     position: fixed;
@@ -587,6 +648,7 @@
 
   .group { display: flex; gap: 8px; align-items: center; }
 
+  /* 버튼 기본 스타일 */
   button {
     background: #f0f0f0;
     color: #333;
@@ -613,14 +675,14 @@
   }
 
   .color-btn {
-    width: 34px;
-    height: 34px;
+    width: 34px; height: 34px;
     border-radius: 50%;
     cursor: pointer;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     flex-shrink: 0;
   }
 
+  /* 색상 선택기 팝업 */
   .color-picker-popup {
     position: absolute;
     top: 70px;
@@ -642,8 +704,7 @@
   }
 
   .color-swatch {
-    width: 30px;
-    height: 30px;
+    width: 30px; height: 30px;
     border-radius: 50%;
     border: 2px solid #eee;
     cursor: pointer;
@@ -652,15 +713,13 @@
   
   .native-picker-wrapper {
     position: relative;
-    width: 30px;
-    height: 30px;
+    width: 30px; height: 30px;
   }
   .rainbow-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: 100%;
+    width: 100%; height: 100%;
     font-size: 18px;
     cursor: pointer;
     background: #f0f0f0;
@@ -689,6 +748,7 @@
     to { transform: rotate(360deg); }
   }
 
+  /* 슬라이더 스타일 */
   input[type="range"] {
     width: 50px;
     flex-shrink: 0;
@@ -713,8 +773,7 @@
   
   .image-card {
     position: relative;
-    width: 100%;
-    height: 100%;
+    width: 100%; height: 100%;
     background: white;
     border-radius: 12px;
     overflow: hidden;
@@ -723,16 +782,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
   }
   .image-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .empty-message { padding: 20px; color: #888; font-size: 0.9rem; }
 
   .delete-img-btn {
     position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 24px;
-    height: 24px;
+    top: 5px; right: 5px;
+    width: 24px; height: 24px;
     background: rgba(255, 68, 68, 0.9);
     color: white;
     border-radius: 50%;
@@ -749,5 +807,24 @@
   .delete-img-btn:hover {
     background: #cc0000;
     transform: scale(1.1);
+  }
+
+  /* 모바일 미디어 쿼리 적용 */
+  @media (max-width: 600px) {
+    .toolbar {
+      gap: 10px;
+      padding: 8px 10px;
+      max-width: 95vw;
+    }
+    .group {
+      gap: 5px;
+    }
+    button, .color-btn {
+      width: 32px;
+      height: 32px;
+    }
+    input[type="range"] {
+      width: 40px;
+    }
   }
 </style>
