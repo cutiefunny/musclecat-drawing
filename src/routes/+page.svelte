@@ -3,7 +3,7 @@
   import { fade } from 'svelte/transition';
   import { getStroke } from 'perfect-freehand';
   import { storage } from '$lib/firebase';
-  import { ref, uploadBytes, listAll, getDownloadURL, deleteObject } from 'firebase/storage';
+  import { ref, uploadBytes, listAll, getDownloadURL, deleteObject, getMetadata, updateMetadata } from 'firebase/storage';
   import emblaCarouselSvelte from 'embla-carousel-svelte';
   import { showAlert, showConfirm, showLoading } from '$lib/stores/dialog';
 
@@ -18,29 +18,28 @@
   // --- 상태 관리 ---
   let history = [];     
   let currentStep = -1; 
-  
-  // 도구 상태 ('pen' | 'eraser' | 'bucket')
   let currentTool = 'pen';
   let lastColor = '#000000'; 
   
-  // UI 상태
   let isColorPickerOpen = false;
   let showBrushPreview = false;
+  
+  // 모달 이미지 데이터 (url, likes, name, time 등 포함)
   let selectedImage = null;
 
-  // 프리셋 색상 목록
+  // 좋아요 쿨타임 관리
+  let cooldownSet = new Set();
+
   const presetColors = [
     '#000000', '#ffffff', '#808080', '#ff0000', '#ff8800', 
     '#ffff00', '#00ff00', '#008800', '#00ffff', '#0000ff', 
     '#8800ff', '#ff00ff'
   ];
 
-  // 갤러리 데이터 & 시간 체크
   let savedDrawings = []; 
   let emblaApi;
   let now = Date.now(); 
 
-  // 옵션
   let color = '#000000';
   let size = 5;
   let isSaving = false;
@@ -57,7 +56,10 @@
 
     const timer = setInterval(() => {
       now = Date.now();
+      updateCooldowns();
     }, 60000);
+
+    updateCooldowns();
 
     return () => {
       window.removeEventListener('resize', resizeCanvas);
@@ -66,6 +68,19 @@
     };
   });
 
+  function updateCooldowns() {
+    if (typeof localStorage === 'undefined') return;
+    
+    const newSet = new Set();
+    savedDrawings.forEach(img => {
+      const cd = localStorage.getItem(`like_cooldown_${img.name}`);
+      if (cd && Date.now() < parseInt(cd)) {
+        newSet.add(img.name);
+      }
+    });
+    cooldownSet = newSet;
+  }
+
   async function loadGallery() {
     try {
       const listRef = ref(storage, 'drawings/');
@@ -73,19 +88,60 @@
       
       const promises = res.items.map(async (itemRef) => {
         const url = await getDownloadURL(itemRef);
+        // 메타데이터(좋아요) 가져오기
+        let likes = 0;
+        try {
+          const metadata = await getMetadata(itemRef);
+          if (metadata.customMetadata && metadata.customMetadata.likes) {
+            likes = parseInt(metadata.customMetadata.likes);
+          }
+        } catch (e) { console.error(e); }
+
         const time = parseInt(itemRef.name.split('.')[0]);
+        
         return {
           url,
           ref: itemRef,
-          time: isNaN(time) ? 0 : time
+          name: itemRef.name,
+          time: isNaN(time) ? 0 : time,
+          likes: likes
         };
       });
 
       const items = await Promise.all(promises);
       savedDrawings = items.sort((a, b) => b.time - a.time);
+      updateCooldowns();
       
     } catch (error) {
       console.error("갤러리 로드 실패:", error);
+    }
+  }
+
+  async function handleLike(img) {
+    if (cooldownSet.has(img.name)) return;
+
+    // UI 즉시 반영
+    img.likes++;
+    savedDrawings = savedDrawings; 
+
+    // 쿨타임 설정 (1분)
+    const cooldownTime = Date.now() + 60 * 1000;
+    localStorage.setItem(`like_cooldown_${img.name}`, cooldownTime.toString());
+    cooldownSet.add(img.name);
+    cooldownSet = new Set(cooldownSet);
+
+    // Firebase 업데이트
+    try {
+      await updateMetadata(img.ref, {
+        customMetadata: {
+          likes: img.likes.toString()
+        }
+      });
+    } catch (error) {
+      console.error("좋아요 저장 실패:", error);
+      img.likes--;
+      savedDrawings = savedDrawings;
+      await showAlert("좋아요 반영에 실패했습니다.");
     }
   }
 
@@ -96,6 +152,7 @@
     try {
       await deleteObject(img.ref);
       savedDrawings = savedDrawings.filter(item => item !== img);
+      if (selectedImage === img) closeImageModal();
     } catch (error) {
       console.error("삭제 실패:", error);
       await showAlert("삭제에 실패했습니다.");
@@ -124,7 +181,6 @@
     renderCanvas();
   }
 
-  // --- 렌더링 (Stroke & Fill) ---
   function renderCanvas() {
     if (!mainCtx) return;
     mainCtx.fillStyle = '#ffffff';
@@ -334,8 +390,8 @@
     }
   }
 
-  function openImageModal(url) {
-    selectedImage = url;
+  function openImageModal(imgObj) {
+    selectedImage = imgObj;
   }
   function closeImageModal() {
     selectedImage = null;
@@ -383,9 +439,11 @@
       
       const filename = `drawings/${Date.now()}.avif`;
       const storageRef = ref(storage, filename);
-      await uploadBytes(storageRef, blob);
+      // 저장 시 초기 좋아요 수 0
+      const metadata = { customMetadata: { likes: '0' } };
+      await uploadBytes(storageRef, blob, metadata);
       
-      await showAlert('저장 완료! 15분 이내에 삭제할 수 있다!');
+      await showAlert('저장 완료! 15분 이내에 삭제할 수 있습니다!');
       await loadGallery(); 
       resetCanvas(); 
       
@@ -419,8 +477,23 @@
   {#if selectedImage}
     <div class="image-modal-backdrop" on:click={closeImageModal} transition:fade={{ duration: 200 }}>
       <div class="image-modal-content" on:click|stopPropagation>
-        <img src={selectedImage} alt="Full size drawing" />
-        <button class="modal-close-btn" on:click={closeImageModal}>×</button>
+        <img src={selectedImage.url} alt="Full size drawing" />
+        
+        <div class="modal-header">
+          <div class="like-wrapper">
+            <span class="like-count">{selectedImage.likes}</span>
+            <button 
+              class="like-btn" 
+              class:disabled={cooldownSet.has(selectedImage.name)}
+              on:click={() => handleLike(selectedImage)}
+              title="좋아요"
+            >
+              ♥
+            </button>
+          </div>
+
+          <button class="modal-close-btn" on:click={closeImageModal}>×</button>
+        </div>
       </div>
     </div>
   {/if}
@@ -543,7 +616,7 @@
       <div class="embla__container">
         {#each savedDrawings as img}
           <div class="embla__slide">
-            <div class="image-card" on:click={() => openImageModal(img.url)}>
+            <div class="image-card" on:click={() => openImageModal(img)}>
               <img src={img.url} alt="Saved drawing" loading="lazy" />
               {#if (now - img.time) < 15 * 60 * 1000}
                 <button 
@@ -598,22 +671,74 @@
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     background: white;
   }
-  .modal-close-btn {
+
+  .modal-header {
     position: absolute;
-    top: 15px; right: 15px;
-    background: rgba(0, 0, 0, 0.5);
+    top: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 201;
+  }
+
+  .like-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 4px 10px;
+    border-radius: 20px;
     color: white;
-    width: 36px; height: 36px;
+  }
+  .like-count {
+    font-size: 14px;
+    font-weight: bold;
+  }
+  
+  /* 수정: 좋아요 버튼 배경 투명 강제 및 스타일 */
+  button.like-btn {
+    background: transparent !important;
+    border: none;
+    color: #ff4d4d;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0;
+    width: auto;
+    height: auto;
+    display: flex;
+    align-items: center;
+    transition: transform 0.2s, color 0.2s;
+  }
+  button.like-btn:hover {
+    background: transparent !important;
+    transform: scale(1.2);
+  }
+  button.like-btn.disabled {
+    color: #ccc;
+    cursor: not-allowed;
+    transform: none;
+    background: transparent !important;
+  }
+
+  .modal-close-btn {
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     border: none;
     font-size: 24px;
     line-height: 1;
     cursor: pointer;
-    box-shadow: none;
-    z-index: 201;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     transition: background 0.2s;
   }
-  .modal-close-btn:hover { background: rgba(0, 0, 0, 0.7); }
+  .modal-close-btn:hover {
+    background: rgba(0, 0, 0, 0.8);
+  }
 
   .brush-preview {
     position: fixed;
@@ -648,7 +773,6 @@
 
   .group { display: flex; gap: 8px; align-items: center; }
 
-  /* 버튼 기본 스타일 */
   button {
     background: #f0f0f0;
     color: #333;
@@ -682,7 +806,6 @@
     flex-shrink: 0;
   }
 
-  /* 색상 선택기 팝업 */
   .color-picker-popup {
     position: absolute;
     top: 70px;
@@ -748,7 +871,6 @@
     to { transform: rotate(360deg); }
   }
 
-  /* 슬라이더 스타일 */
   input[type="range"] {
     width: 50px;
     flex-shrink: 0;
@@ -809,7 +931,7 @@
     transform: scale(1.1);
   }
 
-  /* 모바일 미디어 쿼리 적용 */
+  /* 모바일 미디어 쿼리 */
   @media (max-width: 600px) {
     .toolbar {
       gap: 10px;
