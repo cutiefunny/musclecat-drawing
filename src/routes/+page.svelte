@@ -11,38 +11,43 @@
   let tempCanvas;
   let mainCtx;
   let tempCtx;
-
   let isDrawing = false;
   let points = []; 
 
   // --- 상태 관리 ---
-  let history = [];     
+  let history = [];
   let currentStep = -1; 
   let currentTool = 'pen';
   let lastColor = '#000000'; 
   
   let isColorPickerOpen = false;
   let showBrushPreview = false;
-  
-  // 모달 이미지 데이터 (url, likes, name, time 등 포함)
   let selectedImage = null;
-
-  // 좋아요 쿨타임 관리
   let cooldownSet = new Set();
-
   const presetColors = [
     '#000000', '#ffffff', '#808080', '#ff0000', '#ff8800', 
     '#ffff00', '#00ff00', '#008800', '#00ffff', '#0000ff', 
     '#8800ff', '#ff00ff'
   ];
-
+  
+  // 갤러리 관련 상태
   let savedDrawings = []; 
+  let allImageRefs = [];
+  let galleryCursor = 0;
+  const PAGE_SIZE = 12;
+  let isGalleryLoading = false;
+  let isGalleryEnd = false;
+  let observerSentinel;
+
   let emblaApi;
   let now = Date.now(); 
 
   let color = '#000000';
   let size = 5;
   let isSaving = false;
+
+  // 펜 전용 모드 (Palm Rejection) 상태
+  let isPenMode = false;
 
   onMount(() => {
     mainCtx = mainCanvas.getContext('2d', { willReadFrequently: true });
@@ -52,7 +57,15 @@
     window.addEventListener('resize', resizeCanvas);
     window.addEventListener('keydown', handleKeydown);
 
-    loadGallery();
+    loadGalleryRefs(); 
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && !isGalleryLoading && !isGalleryEnd) {
+        loadMoreImages();
+      }
+    }, { rootMargin: '200px' });
+
+    if (observerSentinel) observer.observe(observerSentinel);
 
     const timer = setInterval(() => {
       now = Date.now();
@@ -65,12 +78,12 @@
       window.removeEventListener('resize', resizeCanvas);
       window.removeEventListener('keydown', handleKeydown);
       clearInterval(timer);
+      observer.disconnect();
     };
   });
 
   function updateCooldowns() {
     if (typeof localStorage === 'undefined') return;
-    
     const newSet = new Set();
     savedDrawings.forEach(img => {
       const cd = localStorage.getItem(`like_cooldown_${img.name}`);
@@ -81,14 +94,42 @@
     cooldownSet = newSet;
   }
 
-  async function loadGallery() {
+  async function loadGalleryRefs() {
     try {
+      isGalleryLoading = true;
       const listRef = ref(storage, 'drawings/');
       const res = await listAll(listRef);
       
-      const promises = res.items.map(async (itemRef) => {
+      allImageRefs = res.items.sort((a, b) => {
+        const timeA = parseInt(a.name.split('.')[0]) || 0;
+        const timeB = parseInt(b.name.split('.')[0]) || 0;
+        return timeB - timeA;
+      });
+
+      galleryCursor = 0;
+      savedDrawings = [];
+      isGalleryEnd = allImageRefs.length === 0;
+      
+      await loadMoreImages();
+    } catch (error) {
+      console.error("갤러리 목록 로드 실패:", error);
+    } finally {
+      isGalleryLoading = false;
+    }
+  }
+
+  async function loadMoreImages() {
+    if (isGalleryEnd || galleryCursor >= allImageRefs.length) {
+      isGalleryEnd = true;
+      return;
+    }
+
+    try {
+      isGalleryLoading = true;
+      const nextRefs = allImageRefs.slice(galleryCursor, galleryCursor + PAGE_SIZE);
+      
+      const promises = nextRefs.map(async (itemRef) => {
         const url = await getDownloadURL(itemRef);
-        // 메타데이터(좋아요) 가져오기
         let likes = 0;
         try {
           const metadata = await getMetadata(itemRef);
@@ -108,29 +149,32 @@
         };
       });
 
-      const items = await Promise.all(promises);
-      savedDrawings = items.sort((a, b) => b.time - a.time);
-      updateCooldowns();
+      const newItems = await Promise.all(promises);
       
+      savedDrawings = [...savedDrawings, ...newItems];
+      galleryCursor += PAGE_SIZE;
+      
+      if (galleryCursor >= allImageRefs.length) {
+        isGalleryEnd = true;
+      }
+
+      updateCooldowns();
     } catch (error) {
-      console.error("갤러리 로드 실패:", error);
+      console.error("이미지 상세 로드 실패:", error);
+    } finally {
+      isGalleryLoading = false;
     }
   }
 
   async function handleLike(img) {
     if (cooldownSet.has(img.name)) return;
-
-    // UI 즉시 반영
     img.likes++;
-    savedDrawings = savedDrawings; 
-
-    // 쿨타임 설정 (1분)
+    savedDrawings = savedDrawings;
     const cooldownTime = Date.now() + 60 * 1000;
     localStorage.setItem(`like_cooldown_${img.name}`, cooldownTime.toString());
     cooldownSet.add(img.name);
     cooldownSet = new Set(cooldownSet);
 
-    // Firebase 업데이트
     try {
       await updateMetadata(img.ref, {
         customMetadata: {
@@ -152,6 +196,8 @@
     try {
       await deleteObject(img.ref);
       savedDrawings = savedDrawings.filter(item => item !== img);
+      allImageRefs = allImageRefs.filter(ref => ref.name !== img.name);
+      
       if (selectedImage === img) closeImageModal();
     } catch (error) {
       console.error("삭제 실패:", error);
@@ -160,7 +206,6 @@
   }
   
   const emblaOptions = { loop: false, dragFree: true, containScroll: 'trimSnaps' };
-
   function onInit(event) { emblaApi = event.detail; }
 
   function handleKeydown(e) {
@@ -185,7 +230,6 @@
     if (!mainCtx) return;
     mainCtx.fillStyle = '#ffffff';
     mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
-
     for (let i = 0; i <= currentStep; i++) {
       const action = history[i];
       if (action.type === 'stroke') {
@@ -215,7 +259,6 @@
     const h = canvas.height;
     const imageData = ctx.getImageData(0, 0, w, h);
     const data = imageData.data;
-
     const r = parseInt(fillColor.slice(1, 3), 16);
     const g = parseInt(fillColor.slice(3, 5), 16);
     const b = parseInt(fillColor.slice(5, 7), 16);
@@ -226,17 +269,13 @@
     const startG = data[startPos + 1];
     const startB = data[startPos + 2];
     const startA = data[startPos + 3];
-
     if (startR === r && startG === g && startB === b && startA === a) return;
-
     const queue = [[Math.floor(startX), Math.floor(startY)]];
     
     while (queue.length) {
       const [x, y] = queue.pop();
       const pos = (y * w + x) * 4;
-
       if (x < 0 || x >= w || y < 0 || y >= h) continue;
-
       if (data[pos] === startR && data[pos+1] === startG && data[pos+2] === startB && data[pos+3] === startA) {
         data[pos] = r;
         data[pos+1] = g;
@@ -255,22 +294,13 @@
 
   function getEventPoint(e) {
     const rect = tempCanvas.getBoundingClientRect();
-    let clientX, clientY, pressure = 0.5;
-
-    if (e.touches && e.touches.length > 0) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-      pressure = e.touches[0].force || 0.5;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-      pressure = 0.5;
-    }
+    const pressure = e.pressure !== undefined ? e.pressure : 0.5;
+    const finalPressure = (pressure === 0 && e.pointerType === 'mouse') ? 0.5 : pressure;
 
     return { 
-      x: clientX - rect.left, 
-      y: clientY - rect.top, 
-      pressure 
+      x: e.clientX - rect.left, 
+      y: e.clientY - rect.top, 
+      pressure: finalPressure
     };
   }
 
@@ -289,11 +319,14 @@
   }
 
   function startDrawing(e) {
-    const point = getEventPoint(e);
+    if (isPenMode && e.pointerType === 'touch') return;
 
+    e.target.setPointerCapture(e.pointerId);
+
+    const point = getEventPoint(e);
     if (isColorPickerOpen) {
       isColorPickerOpen = false;
-      return; 
+      return;
     }
 
     if (currentTool === 'bucket') {
@@ -303,7 +336,7 @@
       history.push({ type: 'fill', x: point.x, y: point.y, color: color });
       currentStep++;
       renderCanvas();
-      return; 
+      return;
     }
 
     isDrawing = true;
@@ -312,10 +345,16 @@
 
   function draw(e) {
     if (!isDrawing) return;
+    if (isPenMode && e.pointerType === 'touch') return;
+    
     if(e.cancelable) e.preventDefault();
     
-    const point = getEventPoint(e);
-    points = [...points, [point.x, point.y, point.pressure]];
+    const coalescedEvents = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    
+    for (let event of coalescedEvents) {
+        const point = getEventPoint(event);
+        points = [...points, [point.x, point.y, point.pressure]];
+    }
     
     if (tempCtx) {
       tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
@@ -323,16 +362,20 @@
     }
   }
 
-  function stopDrawing() {
+  function stopDrawing(e) {
     if (!isDrawing) return;
+    if (isPenMode && e.pointerType === 'touch' && e.type !== 'pointercancel') return;
+
     isDrawing = false;
+    if (e.target.releasePointerCapture) {
+        try { e.target.releasePointerCapture(e.pointerId); } catch(err) {}
+    }
 
     if (currentStep < history.length - 1) {
       history = history.slice(0, currentStep + 1);
     }
     history.push({ type: 'stroke', points: points, color: color, size: size });
     currentStep++;
-    
     if (tempCtx) tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
     renderCanvas();
     points = [];
@@ -352,6 +395,7 @@
     }
   }
 
+  // [수정] clearCanvas 함수는 유지하되, 버튼만 삭제하여 기능은 남겨둡니다.
   function resetCanvas() {
     history = [];
     currentStep = -1;
@@ -403,9 +447,11 @@
     let width = mainCanvas.width;
     let height = mainCanvas.height;
     if (width > height) {
-      if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
+      if (width > MAX_SIZE) { height *= MAX_SIZE / width;
+        width = MAX_SIZE; }
     } else {
-      if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
+      if (height > MAX_SIZE) { width *= MAX_SIZE / height;
+        height = MAX_SIZE; }
     }
     const tempC = document.createElement('canvas');
     tempC.width = width;
@@ -427,26 +473,23 @@
 
     if (isSaving) return;
     isSaving = true;
-    
     showLoading('열심히 저장하고 있어요... 🎨');
 
     try {
       const blob = await createResizedAvifBlob();
       if (!blob) { 
         await showAlert('이미지 변환 실패'); 
-        return; 
+        return;
       }
       
       const filename = `drawings/${Date.now()}.avif`;
       const storageRef = ref(storage, filename);
-      // 저장 시 초기 좋아요 수 0
       const metadata = { customMetadata: { likes: '0' } };
       await uploadBytes(storageRef, blob, metadata);
       
       await showAlert('저장 완료! 15분 이내에 삭제할 수 있습니다!');
-      await loadGallery(); 
-      resetCanvas(); 
-      
+      await loadGalleryRefs(); 
+      resetCanvas();
     } catch (e) {
       console.error(e);
       await showAlert('저장 실패 😢');
@@ -457,8 +500,8 @@
 </script>
 
 <svelte:window 
-  on:mouseup={stopDrawing} 
-  on:touchend={stopDrawing} 
+  on:pointerup={stopDrawing} 
+  on:pointercancel={stopDrawing}
 />
 
 <main>
@@ -526,8 +569,21 @@
   <div class="toolbar">
     <div class="group">
       <button 
+        on:click={() => isPenMode = !isPenMode} 
+        class:active={isPenMode}
+        title={isPenMode ? "펜 전용 모드 켜짐 (손터치 무시)" : "펜/손 모두 사용"}
+        style="font-size: 1.2rem;"
+      >
+        {#if isPenMode}
+          🖊️
+        {:else}
+          👆
+        {/if}
+      </button>
+
+      <button 
         class="color-btn" 
-        style="background-color: {lastColor}; border: 2px solid #ddd;" 
+        style="background-color: {lastColor}; border: 2px solid #ddd;"
         on:click={toggleColorPicker}
         title="색상 선택"
       ></button>
@@ -582,10 +638,6 @@
       <button on:click={redo} disabled={currentStep >= history.length - 1} title="다시 실행">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
       </button>
-      <button on:click={clearCanvas} title="모두 지우기">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-      </button>
-      
       <button 
         on:click={saveToFirebase} 
         disabled={isSaving || currentStep < 0} 
@@ -602,13 +654,14 @@
   </div>
 
   <canvas bind:this={mainCanvas} class="main-canvas"></canvas>
+  
   <canvas
     bind:this={tempCanvas}
     class="temp-canvas"
-    on:mousedown={startDrawing}
-    on:mousemove={draw}
-    on:touchstart|nonpassive={startDrawing}
-    on:touchmove|nonpassive={draw}
+    on:pointerdown={startDrawing}
+    on:pointermove={draw}
+    on:pointerup={stopDrawing}
+    on:pointercancel={stopDrawing}
   ></canvas>
 
   <div class="gallery-wrapper">
@@ -630,7 +683,16 @@
             </div>
           </div>
         {/each}
-        {#if savedDrawings.length === 0}
+        
+        {#if !isGalleryEnd}
+          <div class="embla__slide observer-slide" bind:this={observerSentinel}>
+            <div class="loading-placeholder">
+              <div class="spinner small"></div>
+            </div>
+          </div>
+        {/if}
+
+        {#if savedDrawings.length === 0 && isGalleryEnd}
             <div class="empty-message">저장된 그림이 없습니다.</div>
         {/if}
       </div>
@@ -648,7 +710,8 @@
   /* 이미지 모달 스타일 */
   .image-modal-backdrop {
     position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     background: rgba(0, 0, 0, 0.8);
     z-index: 200;
     display: flex;
@@ -696,7 +759,6 @@
     font-weight: bold;
   }
   
-  /* 수정: 좋아요 버튼 배경 투명 강제 및 스타일 */
   button.like-btn {
     background: transparent !important;
     border: none;
@@ -850,7 +912,8 @@
   }
   #native-color {
     position: absolute;
-    top: 0; left: 0; width: 100%; height: 100%;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     opacity: 0; cursor: pointer;
   }
 
@@ -865,6 +928,13 @@
   
   .spinner {
     animation: rotate 1s linear infinite;
+  }
+  .spinner.small {
+    width: 24px;
+    height: 24px;
+    border: 3px solid #ddd;
+    border-top-color: #333;
+    border-radius: 50%;
   }
   @keyframes rotate {
     from { transform: rotate(0deg); }
@@ -912,7 +982,8 @@
   .delete-img-btn {
     position: absolute;
     top: 5px; right: 5px;
-    width: 24px; height: 24px;
+    width: 24px;
+    height: 24px;
     background: rgba(255, 68, 68, 0.9);
     color: white;
     border-radius: 50%;
@@ -931,7 +1002,21 @@
     transform: scale(1.1);
   }
 
-  /* 모바일 미디어 쿼리 */
+  .observer-slide {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .loading-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f5f5f5;
+    border-radius: 12px;
+  }
+
   @media (max-width: 600px) {
     .toolbar {
       gap: 10px;
