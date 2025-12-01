@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { storage } from '$lib/firebase';
   import { ref, listAll, getDownloadURL, deleteObject } from 'firebase/storage';
+  import { showAlert, showConfirm } from '$lib/stores/dialog';
 
   let images = [];
   let isLoading = true;
@@ -16,44 +17,39 @@
       const listRef = ref(storage, 'drawings/');
       const res = await listAll(listRef);
 
-      // 모든 파일의 다운로드 URL과 메타데이터(참조)를 가져옵니다.
       const promises = res.items.map(async (itemRef) => {
         const url = await getDownloadURL(itemRef);
         return {
-          ref: itemRef, // 삭제할 때 필요
+          ref: itemRef,
           url: url,
           name: itemRef.name,
-          time: parseInt(itemRef.name.split('.')[0]) // 파일명(타임스탬프)으로 시간 파싱
+          time: parseInt(itemRef.name.split('.')[0]) 
         };
       });
 
       const result = await Promise.all(promises);
-
-      // 최신순(내림차순) 정렬
       images = result.sort((a, b) => b.time - a.time);
 
     } catch (error) {
       console.error("이미지 로드 실패:", error);
-      alert('목록을 불러오는데 실패했습니다.');
+      await showAlert('목록을 불러오는데 실패했습니다.');
     } finally {
       isLoading = false;
     }
   }
 
   async function handleDelete(image) {
-    if (!confirm('정말 이 그림을 삭제하시겠습니까? 복구할 수 없습니다.')) return;
+    const isConfirmed = await showConfirm('정말 이 그림을 삭제하시겠습니까?\n복구할 수 없습니다.');
+    if (!isConfirmed) return;
 
     try {
-      // Firebase Storage에서 삭제
       await deleteObject(image.ref);
-      
-      // 화면 목록에서도 즉시 제거
       images = images.filter(img => img.name !== image.name);
-      alert('삭제되었습니다.');
+      await showAlert('삭제되었습니다.');
       
     } catch (error) {
       console.error("삭제 실패:", error);
-      alert('삭제에 실패했습니다.');
+      await showAlert('삭제에 실패했습니다.');
     }
   }
 
@@ -162,7 +158,7 @@
 
   .image-wrapper {
     width: 100%;
-    aspect-ratio: 1; /* 정사각형 비율 유지 */
+    aspect-ratio: 1; 
     background: #f0f0f0;
     display: flex;
     align-items: center;

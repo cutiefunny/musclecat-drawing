@@ -4,6 +4,7 @@
   import { storage } from '$lib/firebase';
   import { ref, uploadBytes, listAll, getDownloadURL, deleteObject } from 'firebase/storage';
   import emblaCarouselSvelte from 'embla-carousel-svelte';
+  import { showAlert, showConfirm } from '$lib/stores/dialog';
 
   let mainCanvas;
   let tempCanvas;
@@ -75,13 +76,15 @@
   }
 
   async function deleteImage(img) {
-    if (!confirm('정말 삭제하시겠습니까?')) return;
+    const isConfirmed = await showConfirm('정말 삭제하시겠습니까?');
+    if (!isConfirmed) return;
+
     try {
       await deleteObject(img.ref);
       savedDrawings = savedDrawings.filter(item => item !== img);
     } catch (error) {
       console.error("삭제 실패:", error);
-      alert("삭제에 실패했습니다.");
+      await showAlert("삭제에 실패했습니다.");
     }
   }
   
@@ -254,29 +257,36 @@
   }
 
   async function saveToFirebase() {
-    // [수정됨] currentStep이 0보다 작으면(초기 상태 or 모두 Undo됨) 저장 불가
     if (currentStep < 0) {
-      alert('그림을 그려주세요!');
+      await showAlert('그림을 그려주세요!');
       return;
     }
+
+    // --- [추가됨] 저장 컨펌 로직 ---
+    const isConfirmed = await showConfirm('그림을 저장하시겠습니까?');
+    if (!isConfirmed) return; // 취소하면 저장 중단
+    // ----------------------------
 
     if (isSaving) return;
     isSaving = true;
     try {
       const blob = await createResizedAvifBlob();
-      if (!blob) { alert('이미지 변환 실패'); return; }
+      if (!blob) { 
+        await showAlert('이미지 변환 실패'); 
+        return; 
+      }
       
       const filename = `drawings/${Date.now()}.avif`;
       const storageRef = ref(storage, filename);
       await uploadBytes(storageRef, blob);
       
-      alert('저장 완료! 새 종이를 준비했습니다.');
+      await showAlert('저장 완료! 삭제는 15분 이내로 가능합니다.');
       await loadGallery(); 
       clearCanvas(); 
       
     } catch (e) {
       console.error(e);
-      alert('저장 실패');
+      await showAlert('저장 실패');
     } finally {
       isSaving = false;
     }
@@ -437,9 +447,7 @@
     white-space: nowrap;
     scrollbar-width: none;
   }
-  .toolbar::-webkit-scrollbar {
-    display: none;
-  }
+  .toolbar::-webkit-scrollbar { display: none; }
 
   .group { display: flex; gap: 8px; align-items: center; }
 
