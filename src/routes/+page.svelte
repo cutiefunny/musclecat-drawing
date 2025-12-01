@@ -18,7 +18,7 @@
   let history = [];     
   let currentStep = -1; 
   
-  // [변경] 도구 상태 관리 ('pen' | 'eraser' | 'bucket')
+  // 도구 상태 관리 ('pen' | 'eraser' | 'bucket')
   let currentTool = 'pen';
   let lastColor = '#000000'; // 원래 색상 기억용
   
@@ -35,7 +35,7 @@
   let isSaving = false;
 
   onMount(() => {
-    mainCtx = mainCanvas.getContext('2d', { willReadFrequently: true }); // 읽기 최적화
+    mainCtx = mainCanvas.getContext('2d', { willReadFrequently: true });
     tempCtx = tempCanvas.getContext('2d');
 
     resizeCanvas();
@@ -181,7 +181,7 @@
 
       if (x < 0 || x >= w || y < 0 || y >= h) continue;
 
-      // 현재 픽셀이 시작 색상과 같은지 확인 (오차 범위 없이 정확히 일치)
+      // 현재 픽셀이 시작 색상과 같은지 확인
       if (data[pos] === startR && data[pos+1] === startG && data[pos+2] === startB && data[pos+3] === startA) {
         data[pos] = r;
         data[pos+1] = g;
@@ -233,18 +233,15 @@
     return d.join(' ');
   }
 
-  // --- 그리기 시작 (도구별 분기) ---
   function startDrawing(e) {
     const point = getEventPoint(e);
 
-    // [Bucket] 채우기 도구일 경우
+    // [Bucket] 채우기 도구
     if (currentTool === 'bucket') {
-      // 히스토리 관리
       if (currentStep < history.length - 1) {
         history = history.slice(0, currentStep + 1);
       }
       
-      // 채우기 동작 기록
       history.push({
         type: 'fill',
         x: point.x,
@@ -253,12 +250,11 @@
       });
       currentStep++;
       
-      // 즉시 렌더링
       renderCanvas();
       return; 
     }
 
-    // [Pen / Eraser] 그리기 도구일 경우
+    // [Pen / Eraser] 그리기 도구
     isDrawing = true;
     points = [[point.x, point.y, point.pressure]];
   }
@@ -284,7 +280,6 @@
       history = history.slice(0, currentStep + 1);
     }
     
-    // 스트로크 기록
     history.push({ 
       type: 'stroke',
       points: points, 
@@ -313,23 +308,28 @@
     }
   }
 
-  // 내부 리셋용 (저장 후 호출)
   function resetCanvas() {
     history = [];
     currentStep = -1;
     renderCanvas();
-    setTool('pen'); // 펜으로 복귀
+    setTool('pen');
+  }
+
+  function clearCanvas() {
+    // 툴바에서 '모두 지우기' 버튼 클릭 시
+    history = [];
+    currentStep = -1;
+    renderCanvas();
+    setTool('pen');
   }
 
   function updateColor(e) {
     lastColor = e.target.value;
-    // 지우개가 아닐 때만 현재 색상 변경
     if (currentTool !== 'eraser') {
       color = lastColor;
     }
   }
 
-  // 도구 선택 함수
   function setTool(tool) {
     currentTool = tool;
     if (tool === 'eraser') {
@@ -380,7 +380,7 @@
       const storageRef = ref(storage, filename);
       await uploadBytes(storageRef, blob);
       
-      await showAlert('저장 완료! 15분 이내로 삭제 가능합니다.');
+      await showAlert('저장 완료! 15분 이내에 삭제할 수 있습니다.');
       await loadGallery(); 
       resetCanvas(); 
       
@@ -600,9 +600,30 @@
     to { transform: rotate(360deg); }
   }
 
+  /* 슬라이더 축소 */
   input[type="range"] {
-    width: 80px;
+    width: 50px; /* Reduced from 80px */
     flex-shrink: 0;
+  }
+
+  /* 색상 선택기 스타일링 */
+  input[type="color"] {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: none;
+    background: none;
+    border-radius: 50%;
+    cursor: pointer;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+  input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 50%;
   }
 
   .gallery-wrapper {
