@@ -43,7 +43,7 @@
   let now = Date.now(); 
 
   let color = '#000000';
-  let size = 5;
+  let size = 8; // 필압 효과를 잘 보기 위해 기본 사이즈를 약간 키웠습니다
   let isSaving = false;
 
   // 펜 전용 모드 (Palm Rejection) 상태
@@ -240,12 +240,15 @@
     }
   }
 
+  // [수정됨] 필압 감지 옵션 강화
   function drawStrokeOnCanvas(ctx, points, strokeColor, strokeSize) {
     const stroke = getStroke(points, {
       size: strokeSize,
-      thinning: 0.5,
+      thinning: 0.7, // [수정] 0.5 -> 0.7 (압력에 따른 굵기 변화폭을 키움)
       smoothing: 0.5,
       streamline: 0.5,
+      simulatePressure: false, // [중요] 실제 하드웨어 압력 데이터를 우선 사용하도록 설정
+      last: true,
     });
     const pathData = getSvgPathFromStroke(stroke);
     const myPath = new Path2D(pathData);
@@ -292,15 +295,26 @@
     ctx.putImageData(imageData, 0, 0);
   }
 
+  // [수정됨] 압력 감지 로직 보완
   function getEventPoint(e) {
     const rect = tempCanvas.getBoundingClientRect();
-    const pressure = e.pressure !== undefined ? e.pressure : 0.5;
-    const finalPressure = (pressure === 0 && e.pointerType === 'mouse') ? 0.5 : pressure;
+    
+    // 기본 압력 값 가져오기
+    let pressure = e.pressure;
+    
+    // pointerType이 'touch'이거나 'mouse'인 경우 압력이 0이거나 0.5로 고정될 수 있음
+    // S펜(pen)일 때만 압력 값을 그대로 사용하고, 나머지는 0.5로 통일하여 일정한 굵기 제공
+    if (e.pointerType !== 'pen') {
+        pressure = 0.5;
+    } else {
+        // S펜이라도 가끔 0이 들어오는 경우 방지 (최소 0.1)
+        pressure = Math.max(0.1, pressure); 
+    }
 
     return { 
       x: e.clientX - rect.left, 
       y: e.clientY - rect.top, 
-      pressure: finalPressure
+      pressure: pressure
     };
   }
 
@@ -395,15 +409,7 @@
     }
   }
 
-  // [수정] clearCanvas 함수는 유지하되, 버튼만 삭제하여 기능은 남겨둡니다.
   function resetCanvas() {
-    history = [];
-    currentStep = -1;
-    renderCanvas();
-    setTool('pen');
-  }
-
-  function clearCanvas() {
     history = [];
     currentStep = -1;
     renderCanvas();
