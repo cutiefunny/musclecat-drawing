@@ -4,8 +4,7 @@
 > **SvelteKit**과 **Firebase**로 만든 모바일 최적화 터치 드로잉 웹앱입니다.  
 > 부드러운 필기감과 실시간 갤러리, PWA 기능을 제공합니다.
 
-![Project Banner](https://via.placeholder.com/1200x600?text=MuscleCat+Drawing+App+Screenshot)
-*(준비중)*
+![Project Banner](/static/screenshot.jpg)
 
 ## ✨ 주요 기능 (Features)
 
