@@ -43,11 +43,15 @@
   let now = Date.now(); 
 
   let color = '#000000';
-  let size = 8; // 필압 효과를 잘 보기 위해 기본 사이즈를 약간 키웠습니다
+  let size = 8;
   let isSaving = false;
 
   // 펜 전용 모드 (Palm Rejection) 상태
   let isPenMode = false;
+
+  // --- [최적화] 스냅샷 관련 변수 ---
+  const SNAPSHOT_INTERVAL = 10; // 10회 작업마다 상태 저장
+  let snapshots = new Map();    // key: step index, value: ImageData
 
   onMount(() => {
     mainCtx = mainCanvas.getContext('2d', { willReadFrequently: true });
@@ -216,6 +220,7 @@
     }
   }
 
+  // --- [최적화] 캔버스 리사이즈 및 스냅샷 초기화 ---
   function resizeCanvas() {
     [mainCanvas, tempCanvas].forEach(canvas => {
       if (canvas) {
@@ -223,14 +228,42 @@
         canvas.height = window.innerHeight;
       }
     });
+    
+    // 화면 크기가 바뀌면 기존 스냅샷(이미지 데이터)은 좌표가 안 맞으므로 초기화
+    snapshots.clear();
     renderCanvas();
   }
 
+  // --- [최적화] 스냅샷 기반 렌더링 함수 ---
   function renderCanvas() {
     if (!mainCtx) return;
-    mainCtx.fillStyle = '#ffffff';
-    mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
-    for (let i = 0; i <= currentStep; i++) {
+
+    // 1. 현재 단계(currentStep)보다 같거나 작은 가장 최신 스냅샷 찾기
+    let startIndex = 0;
+    let nearestSnapshot = null;
+    
+    // 키를 내림차순 정렬하여 가장 가까운 과거의 스냅샷 검색
+    const snapshotIndices = Array.from(snapshots.keys()).sort((a, b) => b - a);
+    
+    for (const index of snapshotIndices) {
+      if (index <= currentStep) {
+        nearestSnapshot = snapshots.get(index);
+        startIndex = index + 1; // 스냅샷 바로 다음 단계부터 그리기 시작
+        break;
+      }
+    }
+
+    // 2. 스냅샷이 있으면 복구, 없으면 백지 초기화
+    if (nearestSnapshot) {
+      mainCtx.putImageData(nearestSnapshot, 0, 0);
+    } else {
+      mainCtx.fillStyle = '#ffffff';
+      mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+      startIndex = 0;
+    }
+
+    // 3. 스냅샷 이후의 작업만 순차적으로 다시 그리기 (부하 감소)
+    for (let i = startIndex; i <= currentStep; i++) {
       const action = history[i];
       if (action.type === 'stroke') {
         drawStrokeOnCanvas(mainCtx, action.points, action.color, action.size);
@@ -240,14 +273,13 @@
     }
   }
 
-  // [수정됨] 필압 감지 옵션 강화
   function drawStrokeOnCanvas(ctx, points, strokeColor, strokeSize) {
     const stroke = getStroke(points, {
       size: strokeSize,
-      thinning: 0.7, // [수정] 0.5 -> 0.7 (압력에 따른 굵기 변화폭을 키움)
+      thinning: 0.7, 
       smoothing: 0.5,
       streamline: 0.5,
-      simulatePressure: false, // [중요] 실제 하드웨어 압력 데이터를 우선 사용하도록 설정
+      simulatePressure: false, // 실제 하드웨어 압력 우선
       last: true,
     });
     const pathData = getSvgPathFromStroke(stroke);
@@ -295,15 +327,11 @@
     ctx.putImageData(imageData, 0, 0);
   }
 
-  // [수정됨] 압력 감지 로직 보완
   function getEventPoint(e) {
     const rect = tempCanvas.getBoundingClientRect();
-    
-    // 기본 압력 값 가져오기
     let pressure = e.pressure;
     
-    // pointerType이 'touch'이거나 'mouse'인 경우 압력이 0이거나 0.5로 고정될 수 있음
-    // S펜(pen)일 때만 압력 값을 그대로 사용하고, 나머지는 0.5로 통일하여 일정한 굵기 제공
+    // S펜 외의 입력은 압력 0.5로 고정
     if (e.pointerType !== 'pen') {
         pressure = 0.5;
     } else {
@@ -332,6 +360,7 @@
     return d.join(' ');
   }
 
+  // --- [최적화] 채우기 도구 사용 시 스냅샷 처리 ---
   function startDrawing(e) {
     if (isPenMode && e.pointerType === 'touch') return;
 
@@ -344,12 +373,25 @@
     }
 
     if (currentTool === 'bucket') {
+      // Undo 상태에서 그리면 미래의 히스토리와 스냅샷 삭제
       if (currentStep < history.length - 1) {
         history = history.slice(0, currentStep + 1);
+        for (const key of snapshots.keys()) {
+           if (key > currentStep) snapshots.delete(key);
+        }
       }
+
       history.push({ type: 'fill', x: point.x, y: point.y, color: color });
       currentStep++;
-      renderCanvas();
+      
+      // 메인 캔버스에 바로 채우기 실행
+      floodFill(mainCtx, point.x, point.y, color);
+
+      // 스냅샷 저장 주기 체크
+      if (currentStep % SNAPSHOT_INTERVAL === 0) {
+        const imageData = mainCtx.getImageData(0, 0, mainCanvas.width, mainCanvas.height);
+        snapshots.set(currentStep, imageData);
+      }
       return;
     }
 
@@ -376,6 +418,7 @@
     }
   }
 
+  // --- [최적화] 그리기 종료 및 스냅샷 저장 ---
   function stopDrawing(e) {
     if (!isDrawing) return;
     if (isPenMode && e.pointerType === 'touch' && e.type !== 'pointercancel') return;
@@ -385,13 +428,28 @@
         try { e.target.releasePointerCapture(e.pointerId); } catch(err) {}
     }
 
+    // Undo 후 그리기 시 미래 데이터 정리
     if (currentStep < history.length - 1) {
       history = history.slice(0, currentStep + 1);
+      for (const key of snapshots.keys()) {
+        if (key > currentStep) snapshots.delete(key);
+      }
     }
+
     history.push({ type: 'stroke', points: points, color: color, size: size });
     currentStep++;
+    
     if (tempCtx) tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-    renderCanvas();
+    
+    // [최적화] 전체를 다시 그리지 않고 현재 획만 메인 캔버스에 합성
+    drawStrokeOnCanvas(mainCtx, points, color, size);
+
+    // [최적화] 지정된 간격마다 스냅샷 저장
+    if (currentStep % SNAPSHOT_INTERVAL === 0) {
+      const imageData = mainCtx.getImageData(0, 0, mainCanvas.width, mainCanvas.height);
+      snapshots.set(currentStep, imageData);
+    }
+    
     points = [];
   }
 
@@ -409,9 +467,11 @@
     }
   }
 
+  // --- [최적화] 리셋 시 스냅샷도 초기화 ---
   function resetCanvas() {
     history = [];
     currentStep = -1;
+    snapshots.clear(); 
     renderCanvas();
     setTool('pen');
   }
@@ -449,7 +509,7 @@
 
   async function createResizedAvifBlob() {
     if (!mainCanvas) return null;
-    const MAX_SIZE = 600;
+    const MAX_SIZE = 1200;
     let width = mainCanvas.width;
     let height = mainCanvas.height;
     if (width > height) {
@@ -733,7 +793,7 @@
     box-sizing: border-box;
   }
   .image-modal-content img {
-    width: 100%; height: auto; max-height: 80vh;
+    width: 100%; height: auto; max-height: 90vh;
     object-fit: contain;
     display: block;
     border-radius: 8px;
