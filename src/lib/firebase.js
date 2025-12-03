@@ -1,8 +1,10 @@
 // src/lib/firebase.js
 import { initializeApp } from "firebase/app";
 import { getStorage } from "firebase/storage";
+import { getFirestore } from "firebase/firestore"; // [추가]
 
 const firebaseConfig = {
+  // ... (기존 설정 유지)
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -11,8 +13,7 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-// Firebase 앱 초기화
 const app = initializeApp(firebaseConfig);
 
-// Storage 인스턴스 내보내기
 export const storage = getStorage(app);
+export const db = getFirestore(app); // [추가] Firestore 내보내기

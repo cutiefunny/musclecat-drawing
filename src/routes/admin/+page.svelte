@@ -1,22 +1,58 @@
 <script>
   import { onMount } from 'svelte';
-  import { storage } from '$lib/firebase';
+  import { storage, db } from '$lib/firebase'; // db 추가
   import { ref, listAll, getDownloadURL, deleteObject } from 'firebase/storage';
+  import { doc, getDoc, setDoc } from 'firebase/firestore'; // Firestore 함수 추가
   import { showAlert, showConfirm } from '$lib/stores/dialog';
 
   let images = [];
   let isLoading = true;
 
-  onMount(() => {
+  // [추가] 설정값 상태 관리 (기본값)
+  let config = {
+    idleTimeoutSec: 60, // 1분
+    slideDurationSec: 5 // 5초
+  };
+
+  onMount(async () => {
+    await loadSettings();
     loadImages();
   });
+
+  // [추가] Firestore에서 설정 불러오기
+  async function loadSettings() {
+    try {
+      const docRef = doc(db, "global", "settings");
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        config = docSnap.data();
+      }
+    } catch (e) {
+      console.error("설정 로드 실패:", e);
+    }
+  }
+
+  // [추가] 설정을 Firestore에 저장하기
+  async function saveSettings() {
+    try {
+      const docRef = doc(db, "global", "settings");
+      await setDoc(docRef, {
+        idleTimeoutSec: Number(config.idleTimeoutSec),
+        slideDurationSec: Number(config.slideDurationSec)
+      });
+      await showAlert('설정이 저장되었습니다! \n모든 기기에 즉시 반영됩니다.');
+    } catch (e) {
+      console.error(e);
+      await showAlert('설정 저장 실패');
+    }
+  }
 
   async function loadImages() {
     isLoading = true;
     try {
       const listRef = ref(storage, 'drawings/');
       const res = await listAll(listRef);
-
       const promises = res.items.map(async (itemRef) => {
         const url = await getDownloadURL(itemRef);
         return {
@@ -26,10 +62,8 @@
           time: parseInt(itemRef.name.split('.')[0]) 
         };
       });
-
       const result = await Promise.all(promises);
       images = result.sort((a, b) => b.time - a.time);
-
     } catch (error) {
       console.error("이미지 로드 실패:", error);
       await showAlert('목록을 불러오는데 실패했습니다.');
@@ -63,6 +97,25 @@
     <h1>Admin Dashboard</h1>
     <a href="/" class="home-link">← 그림판으로 돌아가기</a>
   </header>
+
+  <section class="settings-panel">
+    <h2>⚙️ 키오스크 설정</h2>
+    <div class="input-group">
+      <label>
+        대기 시간 (초)
+        <input type="number" bind:value={config.idleTimeoutSec} min="5" />
+        <span class="desc">이 시간 동안 입력이 없으면 스크린세이버 실행</span>
+      </label>
+      
+      <label>
+        슬라이드 속도 (초)
+        <input type="number" bind:value={config.slideDurationSec} min="1" />
+        <span class="desc">이미지가 넘어가는 간격</span>
+      </label>
+      
+      <button class="save-btn" on:click={saveSettings}>설정 저장</button>
+    </div>
+  </section>
 
   {#if isLoading}
     <div class="loading">목록을 불러오는 중입니다...</div>
@@ -113,6 +166,22 @@
     font-size: 1.8rem;
     color: #333;
   }
+
+  /* [추가] 설정 패널 스타일 */
+  .settings-panel {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+  }
+  .settings-panel h2 { margin-top: 0; font-size: 1.2rem; margin-bottom: 15px; }
+  .input-group { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; }
+  label { display: flex; flex-direction: column; gap: 5px; font-weight: bold; font-size: 0.9rem; }
+  input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100px; font-size: 1rem; }
+  .desc { font-size: 0.75rem; color: #888; font-weight: normal; }
+  .save-btn { background: #3ECF8E; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+  .save-btn:hover { background: #34b27b; }
 
   .home-link {
     text-decoration: none;
