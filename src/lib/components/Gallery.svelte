@@ -44,6 +44,10 @@
         <div class="embla__slide">
           <div class="image-card" on:click={() => dispatch('open', img)}>
             <img src={img.url} alt="Saved drawing" loading="lazy" />
+
+            {#if img.isMonthlyBest}
+                <div class="crown-badge" title="이 달의 그림">👑</div>
+            {/if}
             
             {#if (now - img.time) < 15 * 60 * 1000}
               <button 
@@ -106,4 +110,21 @@
 
   .observer-slide { display: flex; align-items: center; justify-content: center; }
   .loading-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #f5f5f5; border-radius: 12px; }
+
+  .crown-badge {
+    position: absolute;
+    top: 5px; left: 5px;
+    font-size: 20px;
+    background: rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    width: 30px; height: 30px;
+    display: flex; justify-content: center; align-items: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    z-index: 5;
+    animation: bounce 2s infinite;
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
 </style>

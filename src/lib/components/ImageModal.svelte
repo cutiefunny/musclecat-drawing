@@ -10,6 +10,13 @@
 <div class="image-modal-backdrop" on:click={() => dispatch('close')} transition:fade={{ duration: 200 }}>
   <div class="image-modal-content" on:click|stopPropagation>
     <img src={img.url} alt="Full size drawing" />
+
+    {#if img.isMonthlyBest}
+        <div class="best-title-badge">
+        <span class="crown">👑</span>
+        <span class="text">이 달의 그림</span>
+        </div>
+    {/if}
     
     <div class="modal-header">
       <div class="like-wrapper">
@@ -67,4 +74,18 @@
     transition: background 0.2s;
   }
   .modal-close-btn:hover { background: rgba(0, 0, 0, 0.8); }
+  .best-title-badge {
+    position: absolute;
+    top: -15px; left: 50%; transform: translateX(-50%);
+    background: #FFD700; /* 골드 */
+    color: #5a3e00;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 0.9rem;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    z-index: 202;
+    display: flex; gap: 5px; align-items: center;
+    white-space: nowrap;
+  }
 </style>

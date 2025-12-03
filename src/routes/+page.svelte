@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { getStroke } from 'perfect-freehand';
   
   // Firebase
@@ -8,11 +8,15 @@
   import { doc, onSnapshot } from 'firebase/firestore';
   
   // Stores
-  import { currentTool, color, size, isPenMode, isScreensaverOn, isSaving, lastColor } from '$lib/stores/drawing';
+  // [수정] isColorPickerOpen, showBrushPreview 추가 Import
+  import { currentTool, color, size, isPenMode, isScreensaverOn, isSaving, lastColor, isColorPickerOpen, showBrushPreview } from '$lib/stores/drawing';
   import { savedDrawings, isGalleryLoading, isGalleryEnd, cooldownSet } from '$lib/stores/gallery';
   import { showAlert, showConfirm, showLoading } from '$lib/stores/dialog';
 
-  // Components (리팩토링된 컴포넌트들)
+  // Utils
+  import { updateMonthlyBests } from '$lib/utils/ranking';
+
+  // Components
   import Toolbar from '$lib/components/Toolbar.svelte';
   import ColorPicker from '$lib/components/ColorPicker.svelte';
   import Screensaver from '$lib/components/Screensaver.svelte';
@@ -167,7 +171,11 @@
       });
 
       const newItems = await Promise.all(promises);
-      $savedDrawings = [...$savedDrawings, ...newItems];
+      
+      // 랭킹 계산 포함하여 업데이트
+      const combined = [...$savedDrawings, ...newItems];
+      $savedDrawings = updateMonthlyBests(combined);
+
       galleryCursor += PAGE_SIZE;
       if (galleryCursor >= allImageRefs.length) $isGalleryEnd = true;
       updateCooldowns();
@@ -178,14 +186,13 @@
     }
   }
 
-  // --- 이벤트 핸들러 (컴포넌트에서 호출) ---
+  // --- 이벤트 핸들러 ---
   async function handleLike(event) {
     const img = event.detail;
     if ($cooldownSet.has(img.name)) return;
     
-    // UI 낙관적 업데이트
     img.likes++;
-    $savedDrawings = $savedDrawings; // Svelte 반응성 트리거
+    $savedDrawings = updateMonthlyBests($savedDrawings); // 랭킹 재계산
 
     const cooldownTime = Date.now() + 60 * 1000;
     localStorage.setItem(`like_cooldown_${img.name}`, cooldownTime.toString());
@@ -197,7 +204,7 @@
     } catch (error) {
       console.error("좋아요 실패:", error);
       img.likes--;
-      $savedDrawings = $savedDrawings;
+      $savedDrawings = updateMonthlyBests($savedDrawings); // 실패 시 롤백 및 재계산
       await showAlert("좋아요 실패");
     }
   }
@@ -208,7 +215,10 @@
 
     try {
       await deleteObject(img.ref);
-      $savedDrawings = $savedDrawings.filter(item => item !== img);
+      
+      const filtered = $savedDrawings.filter(item => item !== img);
+      $savedDrawings = updateMonthlyBests(filtered);
+      
       allImageRefs = allImageRefs.filter(ref => ref.name !== img.name);
       if (selectedImage === img) selectedImage = null;
     } catch (error) {
@@ -217,7 +227,7 @@
     }
   }
 
-  // --- 캔버스 로직 (그리기, Undo/Redo) ---
+  // --- 캔버스 로직 ---
   function handleKeydown(e) {
     if ($isScreensaverOn) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') e.shiftKey ? redo() : undo();
@@ -272,7 +282,6 @@
   }
 
   function floodFill(ctx, startX, startY, fillColor) {
-    // (기존 floodFill 로직 동일)
     const w = ctx.canvas.width, h = ctx.canvas.height;
     const imageData = ctx.getImageData(0, 0, w, h), data = imageData.data;
     const r = parseInt(fillColor.slice(1, 3), 16), g = parseInt(fillColor.slice(3, 5), 16), b = parseInt(fillColor.slice(5, 7), 16);
@@ -293,7 +302,6 @@
     ctx.putImageData(imageData, 0, 0);
   }
 
-  // --- 입력 이벤트 처리 ---
   function getEventPoint(e) {
     const rect = tempCanvas.getBoundingClientRect();
     let pressure = e.pressure;
@@ -307,8 +315,11 @@
     if ($isPenMode && e.pointerType === 'touch') return;
     e.target.setPointerCapture(e.pointerId);
     
-    // 컬러피커 닫기
-    if (globalThis.$isColorPickerOpen) { globalThis.$isColorPickerOpen = false; return; }
+    // [수정] 컬러피커 닫기 로직 (스토어 값 확인 및 변경)
+    if ($isColorPickerOpen) { 
+      $isColorPickerOpen = false; 
+      return; 
+    }
 
     const point = getEventPoint(e);
 
@@ -372,9 +383,16 @@
     showLoading('열심히 저장하고 있어요... 🎨');
     try {
       const tempC = document.createElement('canvas');
-      // (리사이징 로직 생략 - 기존과 동일하게 구현 필요 시 추가)
-      tempC.width = mainCanvas.width; tempC.height = mainCanvas.height;
-      tempC.getContext('2d').drawImage(mainCanvas, 0, 0);
+      const MAX_SIZE = 1200;
+      let width = mainCanvas.width;
+      let height = mainCanvas.height;
+      if (width > height) {
+        if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
+      } else {
+        if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
+      }
+      tempC.width = width; tempC.height = height;
+      tempC.getContext('2d').drawImage(mainCanvas, 0, 0, width, height);
       
       const blob = await new Promise(r => tempC.toBlob(r, 'image/avif', 0.8));
       const filename = `drawings/${Date.now()}.avif`;
@@ -429,6 +447,18 @@
     on:delete={handleDelete}
     on:loadMore={loadMoreImages}
   />
+
+  {#if $showBrushPreview}
+    <div 
+      class="brush-preview"
+      style="
+        width: {$size}px; 
+        height: {$size}px; 
+        background-color: {$currentTool === 'eraser' ? '#ffffff' : $color};
+        border: {$currentTool === 'eraser' ? '2px solid #333' : ($color === '#ffffff' ? '2px solid #eee' : 'none')};
+      "
+    ></div>
+  {/if}
 </main>
 
 <style>
@@ -437,4 +467,12 @@
   canvas { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; }
   .temp-canvas { z-index: 2; cursor: crosshair; }
   .main-canvas { z-index: 1; }
+
+  /* 브러시 프리뷰 스타일은 여기서 유지 */
+  .brush-preview {
+    position: fixed;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    border-radius: 50%; pointer-events: none;
+    z-index: 100; box-shadow: 0 0 10px rgba(0,0,0,0.1);
+  }
 </style>
