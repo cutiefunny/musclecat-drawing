@@ -15,34 +15,51 @@
 <div class="toolbar">
   <div class="group">
     <button class="color-btn" style="background-color: {$lastColor};"
-      on:click={() => $isColorPickerOpen = !$isColorPickerOpen}></button>
+      on:click={() => $isColorPickerOpen = !$isColorPickerOpen} title="색상 선택"></button>
     
-    <button on:click={() => setTool('pen')} class:active={$currentTool === 'pen'}><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
-    <button on:click={() => setTool('eraser')} class:active={$currentTool === 'eraser'}><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
-    <button on:click={() => setTool('bucket')} class:active={$currentTool === 'bucket'}><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" 
-      viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/></svg></button>
+    <button on:click={() => setTool('pen')} class:active={$currentTool === 'pen'} title="펜">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+    </button>
+    <button on:click={() => setTool('eraser')} class:active={$currentTool === 'eraser'} title="지우개">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+    </button>
+    <button on:click={() => setTool('bucket')} class:active={$currentTool === 'bucket'} title="채우기">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/></svg>
+    </button>
 
     <input type="range" min="1" max="100" bind:value={$size} 
       on:touchstart={() => $showBrushPreview = true} 
       on:touchend={() => $showBrushPreview = false} 
       on:mousedown={() => $showBrushPreview = true}
       on:mouseup={() => $showBrushPreview = false}
+      title="브러시 크기"
     />
- 
   </div>
   
   <div class="group">
-    <button on:click={() => dispatch('undo')} disabled={!canUndo}><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
-    <button on:click={() => dispatch('redo')} disabled={!canRedo}><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg></button>
-    <button on:click={() => dispatch('save')} disabled={isSaving ||
-      !canUndo} class="save-btn">
-      {#if isSaving} ⏳ {:else} 💾 {/if}
+    <button on:click={() => dispatch('undo')} disabled={!canUndo} title="되돌리기">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+    </button>
+    <button on:click={() => dispatch('redo')} disabled={!canRedo} title="다시 실행">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
+    </button>
+    
+    <button 
+      on:click={() => dispatch('save')} 
+      disabled={isSaving || !canUndo} 
+      class="save-img-btn" 
+      title="저장하기"
+    >
+      {#if isSaving}
+        <span class="loading-emoji">⏳</span>
+      {:else}
+        <img src="/confirm.png" alt="저장" />
+      {/if}
     </button>
   </div>
 </div>
 
 <style>
-  /* Toolbar 관련 CSS 복사 */
   .toolbar {
     position: absolute;
     top: 15px; left: 50%; transform: translateX(-50%);
@@ -51,14 +68,52 @@
     gap: 15px; align-items: center;
     z-index: 10; max-width: 90vw; overflow-x: auto; scrollbar-width: none;
   }
-  .group { display: flex; gap: 8px;
-    align-items: center; }
-  button { background: #f0f0f0; border: none; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; display: flex;
-    justify-content: center; align-items: center; }
-  button.active { background: #ffffff; border: 2px solid #333; }
-  .color-btn { width: 34px;
-    height: 34px; border: 2px solid #ddd; }
-  .save-btn { background: #28a745; color: white; }
-  input[type="range"] { width: 50px;
+  .group { display: flex; gap: 8px; align-items: center; }
+  
+  /* 공통 버튼 스타일 */
+  button { 
+    background: #f0f0f0; border: none; width: 36px; height: 36px; 
+    border-radius: 50%; cursor: pointer; display: flex;
+    justify-content: center; align-items: center; padding: 0;
+    transition: transform 0.1s, background-color 0.2s;
   }
+  
+  button.active { background: #ffffff; border: 2px solid #333; }
+  button:disabled { opacity: 0.3; cursor: not-allowed; }
+  button:active { transform: scale(0.95); }
+
+  .color-btn { width: 34px; height: 34px; border: 2px solid #ddd; }
+  
+  /* [수정됨] 저장 버튼 전용 스타일 (이미지 버튼) */
+  button.save-img-btn {
+    background: transparent; /* 배경 투명 */
+    border: none;
+    box-shadow: none;
+    width: 60px; /* 이미지가 잘 보이도록 크기 약간 조정 */
+    height: 40px;
+    overflow: visible; /* 이미지가 버튼 영역을 다 쓰도록 */
+  }
+  
+  button.save-img-btn:hover {
+    background: transparent; /* 호버 시 배경색 변경 방지 */
+    transform: scale(1.1); /* 살짝 커지는 효과 */
+  }
+  
+  button.save-img-btn:active {
+    transform: scale(0.95);
+  }
+
+  button.save-img-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); /* 이미지 자체에 살짝 그림자 */
+  }
+
+  .loading-emoji {
+    font-size: 1.2rem;
+  }
+
+  input[type="range"] { width: 50px; }
 </style>

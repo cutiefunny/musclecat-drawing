@@ -1,18 +1,14 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { getStroke } from 'perfect-freehand';
-  
   // Firebase
   import { storage, db } from '$lib/firebase';
   import { ref, uploadBytes, listAll, getDownloadURL, deleteObject, getMetadata, updateMetadata } from 'firebase/storage';
   import { doc, onSnapshot } from 'firebase/firestore';
-  
   // Stores
-  // [수정] isColorPickerOpen, showBrushPreview 추가 Import
   import { currentTool, color, size, isPenMode, isScreensaverOn, isSaving, lastColor, isColorPickerOpen, showBrushPreview } from '$lib/stores/drawing';
   import { savedDrawings, isGalleryLoading, isGalleryEnd, cooldownSet } from '$lib/stores/gallery';
   import { showAlert, showConfirm, showLoading } from '$lib/stores/dialog';
-
   // Utils
   import { updateMonthlyBests } from '$lib/utils/ranking';
 
@@ -26,7 +22,7 @@
   // --- 변수 선언 ---
   let mainCanvas, tempCanvas, mainCtx, tempCtx;
   let isDrawing = false;
-  let points = []; 
+  let points = [];
   let history = [];
   let currentStep = -1;
   let snapshots = new Map();
@@ -36,7 +32,7 @@
   let allImageRefs = [];
   let galleryCursor = 0;
   const PAGE_SIZE = 12;
-  
+
   // UI 상태
   let selectedImage = null;
 
@@ -162,14 +158,19 @@
       const promises = nextRefs.map(async (itemRef) => {
         const url = await getDownloadURL(itemRef);
         let likes = 0;
+        // [수정] 관리자 코멘트 변수 추가
+        let adminComment = '';
         try {
           const metadata = await getMetadata(itemRef);
           if (metadata.customMetadata?.likes) likes = parseInt(metadata.customMetadata.likes);
+          // [수정] 메타데이터에서 코멘트 읽기
+          if (metadata.customMetadata?.adminComment) adminComment = metadata.customMetadata.adminComment;
         } catch (e) {}
         const time = parseInt(itemRef.name.split('.')[0]);
-        return { url, ref: itemRef, name: itemRef.name, time: isNaN(time) ? 0 : time, likes };
+     
+        // [수정] 반환 객체에 adminComment 추가
+        return { url, ref: itemRef, name: itemRef.name, time: isNaN(time) ? 0 : time, likes, adminComment };
       });
-
       const newItems = await Promise.all(promises);
       
       // 랭킹 계산 포함하여 업데이트
@@ -204,7 +205,8 @@
     } catch (error) {
       console.error("좋아요 실패:", error);
       img.likes--;
-      $savedDrawings = updateMonthlyBests($savedDrawings); // 실패 시 롤백 및 재계산
+      $savedDrawings = updateMonthlyBests($savedDrawings);
+      // 실패 시 롤백 및 재계산
       await showAlert("좋아요 실패");
     }
   }
@@ -212,13 +214,11 @@
   async function handleDelete(event) {
     const img = event.detail;
     if (!(await showConfirm('정말 삭제하시겠습니까?'))) return;
-
     try {
       await deleteObject(img.ref);
       
       const filtered = $savedDrawings.filter(item => item !== img);
       $savedDrawings = updateMonthlyBests(filtered);
-      
       allImageRefs = allImageRefs.filter(ref => ref.name !== img.name);
       if (selectedImage === img) selectedImage = null;
     } catch (error) {
@@ -245,7 +245,6 @@
     let startIndex = 0;
     let nearestSnapshot = null;
     const snapshotIndices = Array.from(snapshots.keys()).sort((a, b) => b - a);
-    
     for (const index of snapshotIndices) {
       if (index <= currentStep) {
         nearestSnapshot = snapshots.get(index);
@@ -275,7 +274,6 @@
         acc.push(x0, y0, (x0 + x1) / 2, (y1 + y0) / 2);
         return acc;
       }, []).join(',') + 'Z' : '';
-    
     const myPath = new Path2D(d);
     ctx.fillStyle = strokeColor;
     ctx.fill(myPath);
@@ -288,14 +286,14 @@
     const startPos = (Math.floor(startY) * w + Math.floor(startX)) * 4;
     const [startR, startG, startB, startA] = [data[startPos], data[startPos+1], data[startPos+2], data[startPos+3]];
     if (startR === r && startG === g && startB === b && startA === 255) return;
-
     const queue = [[Math.floor(startX), Math.floor(startY)]];
     while(queue.length) {
         const [x, y] = queue.pop();
         const pos = (y * w + x) * 4;
         if(x<0 || x>=w || y<0 || y>=h) continue;
         if(data[pos] === startR && data[pos+1] === startG && data[pos+2] === startB && data[pos+3] === startA) {
-            data[pos] = r; data[pos+1] = g; data[pos+2] = b; data[pos+3] = 255;
+            data[pos] = r;
+            data[pos+1] = g; data[pos+2] = b; data[pos+3] = 255;
             queue.push([x+1,y], [x-1,y], [x,y+1], [x,y-1]);
         }
     }
@@ -314,10 +312,9 @@
     if ($isScreensaverOn) return;
     if ($isPenMode && e.pointerType === 'touch') return;
     e.target.setPointerCapture(e.pointerId);
-    
     // [수정] 컬러피커 닫기 로직 (스토어 값 확인 및 변경)
     if ($isColorPickerOpen) { 
-      $isColorPickerOpen = false; 
+      $isColorPickerOpen = false;
       return; 
     }
 
@@ -343,7 +340,6 @@
     if (!isDrawing) return;
     if ($isPenMode && e.pointerType === 'touch') return;
     if(e.cancelable) e.preventDefault();
-    
     const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (let ev of events) {
       const p = getEventPoint(ev);
@@ -357,7 +353,8 @@
     if (!isDrawing) return;
     if ($isPenMode && e.pointerType === 'touch' && e.type !== 'pointercancel') return;
     isDrawing = false;
-    try { e.target.releasePointerCapture(e.pointerId); } catch {}
+    try { e.target.releasePointerCapture(e.pointerId);
+    } catch {}
 
     if (currentStep < history.length - 1) {
         history = history.slice(0, currentStep + 1);
@@ -376,7 +373,8 @@
   function resetCanvas() { history = []; currentStep = -1; snapshots.clear(); renderCanvas(); $currentTool='pen'; }
 
   async function saveToFirebase() {
-    if (currentStep < 0) { await showAlert('그림을 그려주세요!'); return; }
+    if (currentStep < 0) { await showAlert('그림을 그려주세요!'); return;
+    }
     if (!(await showConfirm('그림을 저장하시겠습니까?'))) return;
     
     $isSaving = true;
@@ -387,22 +385,25 @@
       let width = mainCanvas.width;
       let height = mainCanvas.height;
       if (width > height) {
-        if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
+        if (width > MAX_SIZE) { height *= MAX_SIZE / width;
+        width = MAX_SIZE; }
       } else {
-        if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
+        if (height > MAX_SIZE) { width *= MAX_SIZE / height;
+        height = MAX_SIZE; }
       }
-      tempC.width = width; tempC.height = height;
+      tempC.width = width;
+      tempC.height = height;
       tempC.getContext('2d').drawImage(mainCanvas, 0, 0, width, height);
       
       const blob = await new Promise(r => tempC.toBlob(r, 'image/avif', 0.8));
       const filename = `drawings/${Date.now()}.avif`;
       await uploadBytes(ref(storage, filename), blob, { customMetadata: { likes: '0' } });
-      
       await showAlert('저장 완료! 15분 이내에 삭제할 수 있습니다!');
       await loadGalleryRefs();
       resetCanvas();
     } catch(e) {
-      console.error(e); await showAlert('저장 실패');
+      console.error(e);
+      await showAlert('저장 실패');
     } finally {
       $isSaving = false;
     }
@@ -452,7 +453,7 @@
     <div 
       class="brush-preview"
       style="
-        width: {$size}px; 
+        width: {$size}px;
         height: {$size}px; 
         background-color: {$currentTool === 'eraser' ? '#ffffff' : $color};
         border: {$currentTool === 'eraser' ? '2px solid #333' : ($color === '#ffffff' ? '2px solid #eee' : 'none')};

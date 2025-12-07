@@ -3,8 +3,9 @@
   import { isScreensaverOn } from '$lib/stores/drawing';
   import { savedDrawings } from '$lib/stores/gallery';
   import { createEventDispatcher } from 'svelte';
+  import CommentToast from '$lib/components/CommentToast.svelte'; // [추가]
 
-  export let index = 0; // 부모가 제어하는 슬라이드 인덱스
+  export let index = 0;
   const dispatch = createEventDispatcher();
 </script>
 
@@ -20,6 +21,8 @@
               👑 이 달의 그림
             </div>
         {/if}
+
+        <CommentToast comment={$savedDrawings[index].adminComment} variant="screensaver" />
       </div>
     {/key}
 
@@ -46,7 +49,8 @@
   .screensaver-slide {
     position: absolute;
     top: 0; left: 0;
-    width: 100%; height: 100%;
+    width: 100%;
+    height: 100%;
   }
   .screensaver-slide img {
     width: 100%; height: 100%;
@@ -64,7 +68,7 @@
   }
   .screensaver-text {
     font-size: 1.5rem;
-    color: white; /* 검은 배경이므로 흰색으로 변경 */
+    color: white;
     font-weight: bold;
     text-shadow: 0 2px 4px rgba(0,0,0,0.8);
     animation: pulse 2s infinite;

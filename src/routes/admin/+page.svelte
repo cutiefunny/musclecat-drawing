@@ -1,17 +1,18 @@
 <script>
   import { onMount } from 'svelte';
-  import { storage, db } from '$lib/firebase'; // db 추가
-  import { ref, listAll, getDownloadURL, deleteObject } from 'firebase/storage';
-  import { doc, getDoc, setDoc } from 'firebase/firestore'; // Firestore 함수 추가
+  import { storage, db } from '$lib/firebase';
+  // [수정] getMetadata, updateMetadata 추가
+  import { ref, listAll, getDownloadURL, deleteObject, getMetadata, updateMetadata } from 'firebase/storage';
+  import { doc, getDoc, setDoc } from 'firebase/firestore';
   import { showAlert, showConfirm } from '$lib/stores/dialog';
 
   let images = [];
   let isLoading = true;
 
-  // [추가] 설정값 상태 관리 (기본값)
+  // 설정값 상태 관리
   let config = {
-    idleTimeoutSec: 60, // 1분
-    slideDurationSec: 5 // 5초
+    idleTimeoutSec: 60,
+    slideDurationSec: 5
   };
 
   onMount(async () => {
@@ -19,7 +20,6 @@
     loadImages();
   });
 
-  // [추가] Firestore에서 설정 불러오기
   async function loadSettings() {
     try {
       const docRef = doc(db, "global", "settings");
@@ -33,7 +33,6 @@
     }
   }
 
-  // [추가] 설정을 Firestore에 저장하기
   async function saveSettings() {
     try {
       const docRef = doc(db, "global", "settings");
@@ -53,15 +52,25 @@
     try {
       const listRef = ref(storage, 'drawings/');
       const res = await listAll(listRef);
+      
       const promises = res.items.map(async (itemRef) => {
         const url = await getDownloadURL(itemRef);
+        // [수정] 메타데이터(댓글) 함께 로드
+        let adminComment = '';
+        try {
+          const metadata = await getMetadata(itemRef);
+          adminComment = metadata.customMetadata?.adminComment || '';
+        } catch (e) {}
+
         return {
           ref: itemRef,
           url: url,
           name: itemRef.name,
-          time: parseInt(itemRef.name.split('.')[0]) 
+          time: parseInt(itemRef.name.split('.')[0]),
+          adminComment // 댓글 필드 추가
         };
       });
+
       const result = await Promise.all(promises);
       images = result.sort((a, b) => b.time - a.time);
     } catch (error) {
@@ -69,6 +78,27 @@
       await showAlert('목록을 불러오는데 실패했습니다.');
     } finally {
       isLoading = false;
+    }
+  }
+
+  // [추가] 댓글 달기 기능
+  async function handleComment(image) {
+    const newComment = prompt("이 그림에 남길 관리자 코멘트를 입력하세요:", image.adminComment);
+    if (newComment === null) return; // 취소 시
+
+    try {
+      await updateMetadata(image.ref, {
+        customMetadata: { adminComment: newComment }
+      });
+      
+      // 로컬 상태 업데이트
+      image.adminComment = newComment;
+      images = [...images]; 
+      
+      await showAlert('코멘트가 저장되었습니다.');
+    } catch (error) {
+      console.error("코멘트 저장 실패:", error);
+      await showAlert('저장에 실패했습니다.');
     }
   }
 
@@ -127,11 +157,20 @@
         <div class="card">
           <div class="image-wrapper">
             <img src={img.url} alt={img.name} loading="lazy" />
+            {#if img.adminComment}
+              <div class="comment-badge">💬</div>
+            {/if}
           </div>
           <div class="info">
             <span class="date">{formatDate(img.time)}</span>
-            <button class="delete-btn" on:click={() => handleDelete(img)}>삭제</button>
+            <div class="actions">
+              <button class="comment-btn" on:click={() => handleComment(img)}>댓글</button>
+              <button class="delete-btn" on:click={() => handleDelete(img)}>삭제</button>
+            </div>
           </div>
+          {#if img.adminComment}
+            <div class="comment-preview">{img.adminComment}</div>
+          {/if}
         </div>
       {/each}
     </div>
@@ -167,7 +206,6 @@
     color: #333;
   }
 
-  /* [추가] 설정 패널 스타일 */
   .settings-panel {
     background: white;
     padding: 20px;
@@ -233,12 +271,24 @@
     align-items: center;
     justify-content: center;
     overflow: hidden;
+    position: relative;
   }
 
   .image-wrapper img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .comment-badge {
+    position: absolute;
+    top: 10px; left: 10px;
+    background: rgba(0,0,0,0.6);
+    color: white;
+    border-radius: 50%;
+    width: 24px; height: 24px;
+    display: flex; justify-content: center; align-items: center;
+    font-size: 14px;
   }
 
   .info {
@@ -254,6 +304,23 @@
     color: #888;
   }
 
+  .actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .comment-btn {
+    background: #FFD700;
+    color: #333;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: bold;
+  }
+  .comment-btn:hover { background: #FFC107; }
+
   .delete-btn {
     background: #ff4444;
     color: white;
@@ -267,5 +334,16 @@
 
   .delete-btn:hover {
     background: #cc0000;
+  }
+
+  .comment-preview {
+    padding: 8px 12px;
+    background: #f9f9f9;
+    font-size: 0.85rem;
+    color: #555;
+    border-top: 1px solid #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>
