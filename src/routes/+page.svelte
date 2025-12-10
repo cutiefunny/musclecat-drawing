@@ -3,15 +3,15 @@
   import { getStroke } from 'perfect-freehand';
   // Firebase
   import { storage, db } from '$lib/firebase';
-  import { ref, uploadBytes, listAll, getDownloadURL, deleteObject, getMetadata, updateMetadata } from 'firebase/storage';
-  import { doc, onSnapshot } from 'firebase/firestore';
+  // [수정] Firestore 함수 추가
+  import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+  import { doc, onSnapshot, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+  
   // Stores
   import { currentTool, color, size, isPenMode, isScreensaverOn, isSaving, lastColor, isColorPickerOpen, showBrushPreview } from '$lib/stores/drawing';
   import { savedDrawings, isGalleryLoading, isGalleryEnd, cooldownSet } from '$lib/stores/gallery';
   import { showAlert, showConfirm, showLoading } from '$lib/stores/dialog';
-  // Utils
-  import { updateMonthlyBests } from '$lib/utils/ranking';
-
+  
   // Components
   import Toolbar from '$lib/components/Toolbar.svelte';
   import ColorPicker from '$lib/components/ColorPicker.svelte';
@@ -28,11 +28,8 @@
   let snapshots = new Map();
   const SNAPSHOT_INTERVAL = 10;
 
-  // 갤러리 로딩 상태용
-  let allImageRefs = [];
-  let galleryCursor = 0;
-  const PAGE_SIZE = 12;
-
+  // 갤러리 로딩 상태용 (이제 Firestore로 관리되므로 갤러리 컴포넌트에서 직접 로드함)
+  
   // UI 상태
   let selectedImage = null;
 
@@ -75,7 +72,6 @@
       }
     });
 
-    loadGalleryRefs(); 
     updateCooldowns();
 
     return () => {
@@ -126,106 +122,9 @@
     $cooldownSet = newSet;
   }
 
-  async function loadGalleryRefs() {
-    try {
-      $isGalleryLoading = true;
-      const listRef = ref(storage, 'drawings/');
-      const res = await listAll(listRef);
-      allImageRefs = res.items.sort((a, b) => {
-        const timeA = parseInt(a.name.split('.')[0]) || 0;
-        const timeB = parseInt(b.name.split('.')[0]) || 0;
-        return timeB - timeA;
-      });
-      galleryCursor = 0;
-      $savedDrawings = [];
-      $isGalleryEnd = allImageRefs.length === 0;
-      await loadMoreImages();
-    } catch (error) {
-      console.error("갤러리 목록 로드 실패:", error);
-    } finally {
-      $isGalleryLoading = false;
-    }
-  }
-
-  async function loadMoreImages() {
-    if ($isGalleryEnd || galleryCursor >= allImageRefs.length) {
-      $isGalleryEnd = true;
-      return;
-    }
-    try {
-      $isGalleryLoading = true;
-      const nextRefs = allImageRefs.slice(galleryCursor, galleryCursor + PAGE_SIZE);
-      const promises = nextRefs.map(async (itemRef) => {
-        const url = await getDownloadURL(itemRef);
-        let likes = 0;
-        // [수정] 관리자 코멘트 변수 추가
-        let adminComment = '';
-        try {
-          const metadata = await getMetadata(itemRef);
-          if (metadata.customMetadata?.likes) likes = parseInt(metadata.customMetadata.likes);
-          // [수정] 메타데이터에서 코멘트 읽기
-          if (metadata.customMetadata?.adminComment) adminComment = metadata.customMetadata.adminComment;
-        } catch (e) {}
-        const time = parseInt(itemRef.name.split('.')[0]);
-     
-        // [수정] 반환 객체에 adminComment 추가
-        return { url, ref: itemRef, name: itemRef.name, time: isNaN(time) ? 0 : time, likes, adminComment };
-      });
-      const newItems = await Promise.all(promises);
-      
-      // 랭킹 계산 포함하여 업데이트
-      const combined = [...$savedDrawings, ...newItems];
-      $savedDrawings = updateMonthlyBests(combined);
-
-      galleryCursor += PAGE_SIZE;
-      if (galleryCursor >= allImageRefs.length) $isGalleryEnd = true;
-      updateCooldowns();
-    } catch (error) {
-      console.error("이미지 상세 로드 실패:", error);
-    } finally {
-      $isGalleryLoading = false;
-    }
-  }
-
-  // --- 이벤트 핸들러 ---
-  async function handleLike(event) {
-    const img = event.detail;
-    if ($cooldownSet.has(img.name)) return;
-    
-    img.likes++;
-    $savedDrawings = updateMonthlyBests($savedDrawings); // 랭킹 재계산
-
-    const cooldownTime = Date.now() + 60 * 1000;
-    localStorage.setItem(`like_cooldown_${img.name}`, cooldownTime.toString());
-    $cooldownSet.add(img.name);
-    $cooldownSet = new Set($cooldownSet);
-
-    try {
-      await updateMetadata(img.ref, { customMetadata: { likes: img.likes.toString() } });
-    } catch (error) {
-      console.error("좋아요 실패:", error);
-      img.likes--;
-      $savedDrawings = updateMonthlyBests($savedDrawings);
-      // 실패 시 롤백 및 재계산
-      await showAlert("좋아요 실패");
-    }
-  }
-
-  async function handleDelete(event) {
-    const img = event.detail;
-    if (!(await showConfirm('정말 삭제하시겠습니까?'))) return;
-    try {
-      await deleteObject(img.ref);
-      
-      const filtered = $savedDrawings.filter(item => item !== img);
-      $savedDrawings = updateMonthlyBests(filtered);
-      allImageRefs = allImageRefs.filter(ref => ref.name !== img.name);
-      if (selectedImage === img) selectedImage = null;
-    } catch (error) {
-      console.error("삭제 실패:", error);
-      await showAlert("삭제 실패");
-    }
-  }
+  // Gallery 컴포넌트가 자체적으로 로딩하므로 메인에서는 갤러리 로드 로직 제거/위임
+  // 다만 Gallery 컴포넌트의 loadMore 이벤트 핸들러는 유지하거나 컴포넌트 내부로 이동 가능
+  // 여기서는 Gallery 컴포넌트가 직접 데이터를 관리하도록 변경되었으므로 관련 함수 제거
 
   // --- 캔버스 로직 ---
   function handleKeydown(e) {
@@ -312,7 +211,6 @@
     if ($isScreensaverOn) return;
     if ($isPenMode && e.pointerType === 'touch') return;
     e.target.setPointerCapture(e.pointerId);
-    // [수정] 컬러피커 닫기 로직 (스토어 값 확인 및 변경)
     if ($isColorPickerOpen) { 
       $isColorPickerOpen = false;
       return; 
@@ -372,9 +270,9 @@
   function redo() { if(currentStep < history.length - 1) { currentStep++; renderCanvas(); } }
   function resetCanvas() { history = []; currentStep = -1; snapshots.clear(); renderCanvas(); $currentTool='pen'; }
 
+  // [수정] Firestore에 저장하는 로직 추가
   async function saveToFirebase() {
-    if (currentStep < 0) { await showAlert('그림을 그려주세요!'); return;
-    }
+    if (currentStep < 0) { await showAlert('그림을 그려주세요!'); return; }
     if (!(await showConfirm('그림을 저장하시겠습니까?'))) return;
     
     $isSaving = true;
@@ -385,11 +283,9 @@
       let width = mainCanvas.width;
       let height = mainCanvas.height;
       if (width > height) {
-        if (width > MAX_SIZE) { height *= MAX_SIZE / width;
-        width = MAX_SIZE; }
+        if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
       } else {
-        if (height > MAX_SIZE) { width *= MAX_SIZE / height;
-        height = MAX_SIZE; }
+        if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
       }
       tempC.width = width;
       tempC.height = height;
@@ -397,10 +293,28 @@
       
       const blob = await new Promise(r => tempC.toBlob(r, 'image/avif', 0.8));
       const filename = `drawings/${Date.now()}.avif`;
-      await uploadBytes(ref(storage, filename), blob, { customMetadata: { likes: '0' } });
+      
+      // 1. Storage에 이미지 업로드
+      const storageRef = ref(storage, filename);
+      await uploadBytes(storageRef, blob, { customMetadata: { likes: '0' } });
+      const downloadURL = await getDownloadURL(storageRef);
+
+      // 2. Firestore에 데이터 저장 (빠른 로딩을 위해)
+      await addDoc(collection(db, "posts"), {
+        storageRef: filename,
+        url: downloadURL,
+        name: filename.split('/')[1], // 파일명만
+        createdAt: serverTimestamp(),
+        likes: 0,
+        adminComment: ''
+      });
+
       await showAlert('저장 완료! 15분 이내에 삭제할 수 있습니다!');
-      await loadGalleryRefs();
       resetCanvas();
+      
+      // 갤러리 갱신은 Gallery 컴포넌트 내부 혹은 스토어 구독을 통해 처리됨
+      window.location.reload(); // 간단하게 새로고침하여 반영 (또는 스토어 업데이트)
+
     } catch(e) {
       console.error(e);
       await showAlert('저장 실패');
@@ -424,7 +338,6 @@
     <ImageModal 
       img={selectedImage} 
       on:close={() => selectedImage = null}
-      on:like={handleLike}
     />
   {/if}
 
@@ -445,8 +358,6 @@
 
   <Gallery 
     on:open={(e) => selectedImage = e.detail}
-    on:delete={handleDelete}
-    on:loadMore={loadMoreImages}
   />
 
   {#if $showBrushPreview}
@@ -469,7 +380,6 @@
   .temp-canvas { z-index: 2; cursor: crosshair; }
   .main-canvas { z-index: 1; }
 
-  /* 브러시 프리뷰 스타일은 여기서 유지 */
   .brush-preview {
     position: fixed;
     top: 50%; left: 50%; transform: translate(-50%, -50%);
