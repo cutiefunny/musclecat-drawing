@@ -209,7 +209,7 @@
 {#if selectedImage}
   <ImageModal 
     img={selectedImage} 
-    on:close={() => selectedImage = null}
+    interactive={true}  on:close={() => selectedImage = null}
     on:like={handleLike}
   />
 {/if}
