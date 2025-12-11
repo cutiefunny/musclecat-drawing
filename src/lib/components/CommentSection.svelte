@@ -1,22 +1,22 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { db } from '$lib/firebase';
-  // [수정] doc, deleteDoc, updateDoc 추가 임포트
   import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
   import { showAlert, showConfirm } from '$lib/stores/dialog';
 
   export let img; 
   export let scrollable = false; 
+  export let isAdmin = false; // [추가] 관리자 모드 여부
 
   let comments = [];
   let newComment = '';
   let isSubmitting = false;
   let unsubscribe;
-
-  // [추가] 사용자 식별 및 수정 상태 관리
+  
+  // 사용자 식별 및 수정 상태 관리
   let userId = '';
   let editingId = null; // 현재 수정 중인 댓글 ID
-  let editText = '';    // 수정 중인 텍스트
+  let editText = ''; // 수정 중인 텍스트
 
   onMount(() => {
     // 1. 사용자 ID 로드 또는 생성 (브라우저 단위 식별)
@@ -52,7 +52,7 @@
         text: newComment,
         createdAt: serverTimestamp(),
         author: '냥이' + Math.floor(Math.random() * 1000),
-        userId: userId // [추가] 본인 확인용 ID 저장
+        userId: userId // 본인 확인용 ID 저장
       });
       newComment = '';
     } catch (e) {
@@ -63,10 +63,9 @@
     }
   }
 
-  // [추가] 댓글 삭제 함수
+  // 댓글 삭제 함수
   async function handleDelete(commentId) {
     if (!(await showConfirm("댓글을 삭제하시겠습니까?"))) return;
-    
     try {
       await deleteDoc(doc(db, "comments", commentId));
     } catch (e) {
@@ -75,26 +74,25 @@
     }
   }
 
-  // [추가] 수정 모드 시작
+  // 수정 모드 시작
   function startEdit(comment) {
     editingId = comment.id;
     editText = comment.text;
   }
 
-  // [추가] 수정 취소
+  // 수정 취소
   function cancelEdit() {
     editingId = null;
     editText = '';
   }
 
-  // [추가] 수정 완료 저장
+  // 수정 완료 저장
   async function saveEdit(commentId) {
     if (!editText.trim()) return;
-
     try {
       await updateDoc(doc(db, "comments", commentId), {
         text: editText,
-        isEdited: true // 수정됨 표시 (선택 사항)
+        isEdited: true // 수정됨 표시
       });
       editingId = null;
     } catch (e) {
@@ -130,10 +128,12 @@
             </span>
           </div>
 
-          {#if comment.userId === userId && editingId !== comment.id}
+          {#if (comment.userId === userId || isAdmin) && editingId !== comment.id}
             <div class="btn-group">
-              <button class="text-btn" on:click={() => startEdit(comment)}>수정</button>
-              <span class="divider">|</span>
+              {#if comment.userId === userId}
+                <button class="text-btn" on:click={() => startEdit(comment)}>수정</button>
+                <span class="divider">|</span>
+              {/if}
               <button class="text-btn delete" on:click={() => handleDelete(comment.id)}>삭제</button>
             </div>
           {/if}
@@ -250,10 +250,12 @@
 
   /* 수정 폼 스타일 */
   .edit-form {
-    display: flex; flex-direction: column; gap: 6px; margin-top: 4px;
+    display: flex; flex-direction: column;
+    gap: 6px; margin-top: 4px;
   }
   .edit-form input {
-    padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem;
+    padding: 6px 10px; border: 1px solid #ddd;
+    border-radius: 4px; font-size: 0.9rem;
   }
   .edit-actions {
     display: flex; justify-content: flex-end; gap: 6px;
