@@ -19,6 +19,9 @@
   import Gallery from '$lib/components/Gallery.svelte';
   import ImageModal from '$lib/components/ImageModal.svelte';
 
+  // now playing
+  import NowPlayingWidget from '$lib/components/NowPlayingWidget.svelte';
+
   // --- 변수 선언 ---
   let mainCanvas, tempCanvas, mainCtx, tempCtx;
   let isDrawing = false;
@@ -32,6 +35,7 @@
   
   // UI 상태
   let selectedImage = null;
+  let isMobile = false; // [추가] 모바일 상태 감지 변수
 
   // 스크린세이버 상태
   let lastActivityTime = Date.now();
@@ -45,7 +49,10 @@
     tempCtx = tempCanvas.getContext('2d');
 
     resizeCanvas();
+    checkMobile(); // [추가] 초기 모바일 여부 확인
+
     window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('resize', checkMobile); // [추가] 리사이즈 이벤트 등록
     window.addEventListener('keydown', handleKeydown);
 
     // 사용자 동작 감지
@@ -76,6 +83,7 @@
 
     return () => {
       window.removeEventListener('resize', resizeCanvas);
+      window.removeEventListener('resize', checkMobile); // [추가] 리스너 제거
       window.removeEventListener('keydown', handleKeydown);
       activityEvents.forEach(event => window.removeEventListener(event, handleUserActivity));
       clearInterval(screensaverTimer);
@@ -83,6 +91,11 @@
       unsubSettings();
     };
   });
+
+  // [추가] 모바일 감지 함수
+  function checkMobile() {
+    isMobile = window.innerWidth <= 600;
+  }
 
   // --- 스크린세이버 로직 ---
   function handleUserActivity() {
@@ -121,10 +134,6 @@
     });
     $cooldownSet = newSet;
   }
-
-  // Gallery 컴포넌트가 자체적으로 로딩하므로 메인에서는 갤러리 로드 로직 제거/위임
-  // 다만 Gallery 컴포넌트의 loadMore 이벤트 핸들러는 유지하거나 컴포넌트 내부로 이동 가능
-  // 여기서는 Gallery 컴포넌트가 직접 데이터를 관리하도록 변경되었으므로 관련 함수 제거
 
   // --- 캔버스 로직 ---
   function handleKeydown(e) {
@@ -327,6 +336,10 @@
 <svelte:window on:pointerup={stopDrawing} on:pointercancel={stopDrawing}/>
 
 <main>
+  {#if !isMobile}
+    <NowPlayingWidget />
+  {/if}
+
   <Screensaver 
     index={screensaverIndex} 
     on:stop={stopScreensaver} 
