@@ -146,7 +146,7 @@
   .widget-wrapper {
     position: fixed;
     top: 10px;
-    right: 200px;
+    right: 50px;
     display: flex;
     flex-direction: column;
     align-items: flex-end;

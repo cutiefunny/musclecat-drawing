@@ -338,6 +338,14 @@
 <main>
   {#if !isMobile}
     <NowPlayingWidget />
+
+    <div class="qr-banner">
+      <div class="qr-text">
+        갤러리에서 그림에<br>
+        댓글을 달 수 있다!
+      </div>
+      <img src="/qrcode.jpg" alt="Gallery QR" />
+    </div>
   {/if}
 
   <Screensaver 
@@ -398,5 +406,45 @@
     top: 50%; left: 50%; transform: translate(-50%, -50%);
     border-radius: 50%; pointer-events: none;
     z-index: 100; box-shadow: 0 0 10px rgba(0,0,0,0.1);
+  }
+
+  /* [추가] QR 배너 스타일 */
+  .qr-banner {
+    position: absolute;
+    top: 10px;      /* 툴바 높이에 맞춰 조절하세요 */
+    left: 50px;        /* 화면 왼쪽 여백 */
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background-color: rgba(255, 255, 255, 0.9);
+    padding: 10px 15px;
+    border-radius: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    z-index: 9999;       /* 캔버스보다 위, 모달보다는 아래 */
+    pointer-events: none; /* 그림 그리기 방해 방지 (이미지 클릭 필요시 auto로 변경) */
+    backdrop-filter: blur(5px);
+    transition: transform 0.3s ease;
+  }
+  
+  /* 마우스 올렸을 때 살짝 떠오르는 효과 (선택사항) */
+  .qr-banner:hover {
+    transform: translateY(-5px);
+    pointer-events: auto;
+  }
+
+  .qr-text {
+    font-size: 14px;
+    font-weight: 700;
+    color: #333;
+    line-height: 1.4;
+    text-align: right;
+    word-break: keep-all;
+  }
+
+  .qr-banner img {
+    width: 60px;       /* QR 코드 크기 */
+    height: 60px;
+    border-radius: 8px;
+    display: block;
   }
 </style>
