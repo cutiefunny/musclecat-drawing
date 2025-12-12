@@ -130,17 +130,17 @@
   /* 하단 안내 텍스트 */
   .screensaver-overlay {
     position: absolute;
-    bottom: 50px;
+    top: 0px;
     width: 100%;
     text-align: center;
     z-index: 10000;
   }
   .screensaver-text {
-    font-size: 1.5rem;
+    font-size: 2.0rem;
     color: white;
     font-weight: bold;
     text-shadow: 0 2px 4px rgba(0,0,0,0.8);
-    animation: pulse 2s infinite;
+    /* animation: pulse 2s infinite; */
   }
   @keyframes pulse {
     0% { opacity: 0.7; }

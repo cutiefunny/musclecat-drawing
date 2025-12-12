@@ -72,12 +72,12 @@
   /* 2. Screensaver용 스타일 (하단 고정 관리자 메모) */
   .comment-toast.screensaver {
     bottom: 15%;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(80, 80, 80, 0.2);
     padding: 15px 30px;
     font-size: 1.5rem;
     font-weight: bold;
     text-shadow: 0 2px 4px rgba(0,0,0,0.8);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid rgba(80, 80, 80, 0.2);
     z-index: 10001;
     gap: 15px;
   }
